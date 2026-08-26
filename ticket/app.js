@@ -2,6 +2,11 @@
   "use strict";
 
   const Core = window.TicketCore;
+  const ThemeConfig = window.TicketThemes || {
+    storageKey: "tkfile.theme.v1",
+    themes: ["mocha", "latte", "emacs", "doom"],
+    themeColors: { mocha: "#11111b", latte: "#eff1f5", emacs: "#f7f7f7", doom: "#282c34" }
+  };
   const STORAGE_KEY = "tkfile.encrypted-vault.v1";
   const PBKDF2_ITERATIONS = 310000;
   const AUTO_LOCK_MS = 15 * 60 * 1000;
@@ -43,6 +48,7 @@
     tkImportInput: document.getElementById("tk-import-input"),
     vaultImportInput: document.getElementById("vault-import-input")
   };
+  elements.themeSelects = Array.from(document.querySelectorAll("[data-theme-select]"));
 
   let ticketState = null;
   let vaultKey = null;
@@ -418,6 +424,51 @@
     elements.toast.textContent = message;
     elements.toast.classList.add("show");
     toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 2800);
+  }
+
+  function currentTheme() {
+    const theme = document.documentElement.dataset.theme;
+    return ThemeConfig.themes.includes(theme) ? theme : "mocha";
+  }
+
+  function applyTheme(theme, announce) {
+    if (!ThemeConfig.themes.includes(theme)) return;
+    document.documentElement.dataset.theme = theme;
+    elements.themeSelects.forEach((select) => {
+      select.value = theme;
+    });
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta && ThemeConfig.themeColors[theme]) meta.content = ThemeConfig.themeColors[theme];
+    try {
+      localStorage.setItem(ThemeConfig.storageKey, theme);
+    } catch (error) {
+      // Theme switching remains available for the current page.
+    }
+    if (announce && !elements.app.hidden) {
+      const labels = { mocha: "Catppuccin Mocha", latte: "Catppuccin Latte", emacs: "Emacs Classic", doom: "Doom One" };
+      showToast(`${labels[theme]} theme active.`);
+    }
+  }
+
+  async function chooseTheme() {
+    const result = await openDialog({
+      kicker: "THEME",
+      title: "SELECT COLOR THEME",
+      fields: [{
+        name: "theme",
+        label: "PALETTE",
+        type: "select",
+        value: currentTheme(),
+        options: [
+          { value: "mocha", label: "Catppuccin Mocha" },
+          { value: "latte", label: "Catppuccin Latte" },
+          { value: "emacs", label: "Emacs Classic" },
+          { value: "doom", label: "Doom One" }
+        ]
+      }],
+      actions: [{ value: "cancel", label: "CANCEL" }, { value: "apply", label: "APPLY", primary: true }]
+    });
+    if (result && result.action === "apply") applyTheme(result.values.theme, true);
   }
 
   function buildDialogField(field) {
@@ -936,6 +987,7 @@
       fold: toggleFold,
       copy: copyHeading,
       edit: editHeading,
+      theme: chooseTheme,
       data: dataMenu,
       export: dataMenu,
       import: dataMenu,
@@ -952,6 +1004,10 @@
   }
 
   function bindEvents() {
+    elements.themeSelects.forEach((select) => {
+      select.addEventListener("change", (event) => applyTheme(event.target.value, true));
+    });
+
     elements.setupForm.addEventListener("submit", async function (event) {
       event.preventDefault();
       const data = new FormData(elements.setupForm);
@@ -1078,6 +1134,7 @@
   }
 
   function init() {
+    applyTheme(currentTheme(), false);
     bindEvents();
     if (!window.isSecureContext || !window.crypto || !window.crypto.subtle) {
       elements.authCopy.textContent = "This browser cannot open an encrypted vault. Use the HTTPS GitHub Pages address in a current browser.";
