@@ -94,3 +94,14 @@ test("imports legacy TICKET-prefixed headings", () => {
   assert.equal(item.status, "DONE");
   assert.equal(item.ticketId, "7890");
 });
+
+test("formats headings for direct clipboard copying", () => {
+  assert.equal(
+    Core.formatItemHeading(Core.blankItem({ ticketId: "4564", title: "Printer problem", status: "DONE" })),
+    "DONE | https://link.kdo.de/itsm/4564 | Printer problem"
+  );
+  assert.equal(
+    Core.formatItemHeading(Core.blankItem({ kind: "NOTE", title: "Handover", status: "" })),
+    "NOTE | Handover"
+  );
+});

@@ -243,18 +243,19 @@
     return text.split("\n").map((line) => indent + line).join("\n");
   }
 
+  function formatItemHeading(item) {
+    if (item.kind === "NOTE") return `NOTE | ${item.title}`;
+    const prefix = item.kind === "HARDWARE" ? "HARDWARE " : "";
+    return `${prefix}${item.status || "WORKING"} | ${makeTicketUrl(item.ticketId)} | ${item.title}`;
+  }
+
   function itemBlock(item) {
     const headingIndent = "            ";
     const labelIndent = "                ";
     const valueIndent = "                    ";
     const lines = [];
 
-    if (item.kind === "NOTE") {
-      lines.push(`${headingIndent}NOTE | ${item.title}`);
-    } else {
-      const prefix = item.kind === "HARDWARE" ? "HARDWARE " : "";
-      lines.push(`${headingIndent}${prefix}${item.status || "WORKING"} | ${makeTicketUrl(item.ticketId)} | ${item.title}`);
-    }
+    lines.push(headingIndent + formatItemHeading(item));
 
     if (item.reminder) {
       lines.push(`${labelIndent}REMINDER ${formatReminderTime(item.reminder.due)} | ${item.reminder.message || item.title}`);
@@ -324,6 +325,7 @@
     localDateString,
     displayDate,
     blankItem,
+    formatItemHeading,
     parseTk,
     renderTk,
     sortItems

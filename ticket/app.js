@@ -224,7 +224,7 @@
     elements.setupForm.hidden = mode !== "setup";
     elements.authError.textContent = errorMessage || "";
     if (mode === "setup") {
-      elements.authCopy.textContent = "Create a password for this browser. The vault starts empty; you can import your existing .tk file after unlocking.";
+      elements.authCopy.textContent = "Create this browser's private vault. Everyone using the site gets separate encrypted data, and you can move yours between devices with an encrypted backup file.";
       setTimeout(() => document.getElementById("setup-password").focus(), 0);
     } else {
       elements.authCopy.textContent = "Enter your password to decrypt the ticket vault on this device.";
@@ -309,24 +309,26 @@
     const reminder = item.reminder
       ? `<span class="reminder-chip">REMINDER ${escapeHtml(Core.formatReminderTime(item.reminder.snoozedUntil || item.reminder.due))} | ${escapeHtml(item.reminder.message)}</span>`
       : "";
+    const actions = `<div class="item-actions">` +
+      `<button type="button" data-item-action="copy-heading">COPY HEADING</button>` +
+      `<button type="button" data-item-action="edit-heading">EDIT HEADING</button></div>`;
     let heading;
     let body;
 
     if (item.kind === "NOTE") {
-      heading = `<span class="kind">NOTE</span><span class="pipe">|</span><span class="item-title note-title">${escapeHtml(item.title || "Untitled note")}</span>${reminder}`;
-      body = fieldMarkup(item, "title", "TITLE", { input: true, full: true }) +
-        fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
+      heading = `<span class="heading-copy"><span class="kind">NOTE</span><span class="pipe">|</span>` +
+        `<span class="item-title">${escapeHtml(item.title || "Untitled note")}</span></span>${reminder}`;
+      body = actions + fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
     } else {
-      const kindClass = item.kind === "TICKET" ? " ticket-kind" : "";
-      heading = `<span class="kind${kindClass}">${escapeHtml(item.kind)}</span>` +
+      const kind = item.kind === "HARDWARE" ? `<span class="kind">HARDWARE</span>` : "";
+      heading = `<span class="heading-copy">${kind}` +
         `<span class="status ${statusClass(item.status)}">${escapeHtml(item.status || "WORKING")}</span>` +
         `<span class="pipe">|</span>` +
         `<a class="ticket-id" href="${escapeHtml(Core.makeTicketUrl(item.ticketId) || "#")}" target="_blank" rel="noopener">${escapeHtml(item.ticketId)}</a>` +
         `<span class="pipe">|</span>` +
-        `<span class="item-title">${escapeHtml(item.title || "Untitled ticket")}</span>${reminder}`;
+        `<span class="item-title">${escapeHtml(item.title || "Untitled ticket")}</span></span>${reminder}`;
 
-      body = fieldMarkup(item, "ticketId", "TICKET ID", { input: true }) +
-        fieldMarkup(item, "title", "TITLE", { input: true });
+      body = actions;
       if (item.kind === "HARDWARE") {
         body += fieldMarkup(item, "requester", "REQUESTER", { full: true });
         body += fieldMarkup(item, "hardware", "HARDWARE", { full: true });
@@ -544,6 +546,61 @@
     const firstEditor = Array.from(elements.ticketTree.querySelectorAll(".item")).find((node) => node.dataset.itemId === item.uid)?.querySelector("textarea");
     if (firstEditor) firstEditor.focus();
     showToast(`${kind} created under ${Core.displayDate(item.created)}.`);
+  }
+
+  async function editHeading(uid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item) return showToast("Select a ticket or note first.");
+    const isNote = item.kind === "NOTE";
+    const result = await openDialog({
+      kicker: "EDIT HEADING",
+      title: isNote ? "EDIT NOTE TITLE" : "EDIT TICKET HEADING",
+      copy: isNote
+        ? "Change the title shown in the copyable heading."
+        : "Paste the ticket ID and title together, just like when creating a ticket.",
+      fields: [{
+        name: "value",
+        label: isNote ? "TITLE" : "TICKET ID + TITLE",
+        value: isNote ? item.title : `${item.ticketId} | ${item.title}`,
+        required: true
+      }],
+      actions: [{ value: "cancel", label: "CANCEL" }, { value: "save", label: "SAVE", primary: true }]
+    });
+    if (!result || result.action !== "save") return;
+    if (isNote) {
+      const title = result.values.value.trim();
+      if (!title) return showToast("A note title is required.");
+      item.title = title;
+    } else {
+      const parsed = Core.parseTicketInput(result.values.value);
+      if (!parsed) return showToast("Put the ticket ID first, followed by the title.");
+      item.ticketId = parsed.ticketId;
+      item.title = parsed.title;
+    }
+    queueSave();
+    renderTree();
+    selectItem(item.uid, { open: true, flash: true });
+    showToast("Heading updated.");
+  }
+
+  async function copyHeading(uid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item) return showToast("Select a ticket or note first.");
+    const text = Core.formatItemHeading(item);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      const control = document.createElement("textarea");
+      control.value = text;
+      control.setAttribute("readonly", "");
+      control.style.position = "fixed";
+      control.style.opacity = "0";
+      document.body.appendChild(control);
+      control.select();
+      document.execCommand("copy");
+      control.remove();
+    }
+    showToast("Full heading copied.");
   }
 
   async function switchStatus() {
@@ -877,6 +934,8 @@
       contact: pickContact,
       contacts: editContacts,
       fold: toggleFold,
+      copy: copyHeading,
+      edit: editHeading,
       data: dataMenu,
       export: dataMenu,
       import: dataMenu,
@@ -935,11 +994,23 @@
     elements.modalClose.addEventListener("click", () => elements.modal.close("cancel"));
 
     document.addEventListener("click", function (event) {
+      const itemAction = event.target.closest("[data-item-action]");
+      if (itemAction && !elements.app.hidden) {
+        const itemNode = itemAction.closest(".item[data-item-id]");
+        if (!itemNode) return;
+        selectItem(itemNode.dataset.itemId);
+        if (itemAction.dataset.itemAction === "copy-heading") copyHeading(itemNode.dataset.itemId);
+        if (itemAction.dataset.itemAction === "edit-heading") editHeading(itemNode.dataset.itemId);
+        return;
+      }
       const commandButton = event.target.closest("[data-command]");
       if (commandButton && !elements.app.hidden) runCommand(commandButton.dataset.command);
     });
 
     elements.ticketTree.addEventListener("click", function (event) {
+      const itemSummary = event.target.closest(".item > summary");
+      const selection = window.getSelection();
+      if (itemSummary && selection && !selection.isCollapsed) event.preventDefault();
       const foldTarget = event.target.closest("[data-fold-key]");
       if (foldTarget) activeFoldKey = foldTarget.dataset.foldKey;
       const itemNode = event.target.closest(".item[data-item-id]");
@@ -966,18 +1037,6 @@
       const item = findItem(itemNode.dataset.itemId);
       if (!item) return;
       item[control.dataset.field] = control.value;
-      const summary = itemNode.querySelector(":scope > summary");
-      if (control.dataset.field === "title") {
-        const title = summary.querySelector(".item-title");
-        if (title) title.textContent = control.value || (item.kind === "NOTE" ? "Untitled note" : "Untitled ticket");
-      }
-      if (control.dataset.field === "ticketId") {
-        const ticketId = summary.querySelector(".ticket-id");
-        if (ticketId) {
-          ticketId.textContent = control.value;
-          ticketId.href = Core.makeTicketUrl(control.value) || "#";
-        }
-      }
       queueSave();
     });
 

@@ -35,7 +35,7 @@
       <div id="auth-error" class="error" role="alert" aria-live="polite"></div>
       <button id="restore-vault" class="text-button" type="button">restore encrypted backup</button>
       <input id="restore-input" type="file" accept="application/json,.json,.ticket-vault" hidden>
-      <p class="privacy-note">Your password and ticket data never leave this browser. Export an encrypted backup if you want to use another device.</p>
+      <p class="privacy-note">Each browser gets its own private vault. Your password encrypts both the local vault and exported backup files, so other people can safely use this same website with their own password.</p>
     </div>
   </section>
 
@@ -86,11 +86,13 @@
           <div><dt>status</dt><dd>working / done / assign / wait</dd></div>
           <div><dt>contact</dt><dd>insert a saved contact</dd></div>
           <div><dt>fold</dt><dd>toggle current section</dd></div>
+          <div><dt>copy</dt><dd>copy current heading</dd></div>
+          <div><dt>edit</dt><dd>edit current heading</dd></div>
           <div><dt>data</dt><dd>import / export / password</dd></div>
           <div><dt>lock</dt><dd>encrypt and close vault</dd></div>
           <div><dt>help</dt><dd>show this reference</dd></div>
         </dl>
-        <p class="panel-note">Reminders fire while this page is open and are checked again whenever you unlock it.</p>
+        <p class="panel-note">Every user and device has an independent encrypted vault. Move yours with DATA → Export encrypted backup. Reminders fire while this page is open and are checked again whenever you unlock it.</p>
       </aside>
     </main>
 
