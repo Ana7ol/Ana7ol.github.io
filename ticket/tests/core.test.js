@@ -63,6 +63,10 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
       title: "Morning handover",
       status: "",
       created: "2026-08-27",
+      checklist: [
+        { uid: "check-a", text: "Review open tickets", done: true },
+        { uid: "check-b", text: "Call requester", done: false }
+      ],
       notes: "Review open tickets."
     })
   ];
@@ -72,6 +76,7 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
   assert.match(text, /HARDWARE ASSIGNED TO @CB1 \| https:\/\/link\.kdo\.de\/itsm\/4565 \| New laptop/);
   assert.match(text, /REMINDER 2026-08-27 14:30 \| Call again/);
   assert.match(text, /TIME SPENT 01:02:03/);
+  assert.match(text, /CHECKLIST\n\s+\[x\] Review open tickets\n\s+\[ \] Call requester/);
 
   const parsed = Core.parseTk(text);
   assert.equal(parsed.length, 3);
@@ -87,6 +92,28 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
   assert.equal(parsed[0].timeMs, 3723000);
   assert.equal(parsed[1].asset, "ABC-123");
   assert.equal(parsed[2].notes, "Review open tickets.");
+  assert.deepEqual(parsed[2].checklist.map((entry) => ({ text: entry.text, done: entry.done })), [
+    { text: "Review open tickets", done: true },
+    { text: "Call requester", done: false }
+  ]);
+});
+
+test("imports dashed checklist syntax in notes", () => {
+  const text = [
+    "TKFILE 1",
+    "YEAR 2026",
+    "    MONTH 08",
+    "        DAY 27.08.2026",
+    "            NOTE | Deployment",
+    "                CHECKLIST",
+    "                    - [x] Build",
+    "                    - [ ] Verify"
+  ].join("\n");
+  const [item] = Core.parseTk(text);
+  assert.deepEqual(item.checklist.map((entry) => ({ text: entry.text, done: entry.done })), [
+    { text: "Build", done: true },
+    { text: "Verify", done: false }
+  ]);
 });
 
 test("imports legacy TICKET-prefixed headings", () => {

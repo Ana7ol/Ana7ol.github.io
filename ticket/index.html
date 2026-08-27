@@ -6,7 +6,9 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="robots" content="noindex, nofollow, noarchive">
   <meta name="theme-color" content="#11111b">
-  <title>TKFILE // Local Vault</title>
+  <title>Ticket Forge // Encrypted Desk</title>
+  <link rel="icon" type="image/png" sizes="256x256" href="ticket-forge-icon-256.png">
+  <link rel="apple-touch-icon" href="ticket-forge-icon-256.png">
   <script src="theme-init.js"></script>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -26,7 +28,7 @@
           </select>
         </label>
       </div>
-      <h1 id="auth-title">ticket desk<span class="cursor" aria-hidden="true">_</span></h1>
+      <h1 id="auth-title">ticket forge<span class="cursor" aria-hidden="true">_</span></h1>
       <p id="auth-copy" class="auth-copy"></p>
 
       <form id="unlock-form" class="stack" hidden>
@@ -54,7 +56,7 @@
     <header class="topbar">
       <div>
         <p class="eyebrow">TKFILE 1 // AES-256 LOCAL</p>
-        <h1>ticket desk<span class="cursor" aria-hidden="true">_</span></h1>
+        <h1>ticket forge<span class="cursor" aria-hidden="true">_</span></h1>
       </div>
       <div class="topbar-status" aria-live="polite">
         <label class="theme-control"><span>THEME</span>
@@ -79,7 +81,7 @@
       <button type="button" data-command="contact"><span>CONTACT</span><kbd>Alt P</kbd></button>
       <button type="button" data-command="time"><span>TIME</span><kbd>Alt T</kbd></button>
       <button type="button" data-command="fold"><span>FOLD</span><kbd>Ctrl Alt F</kbd></button>
-      <button type="button" data-command="delete"><span>DELETE</span><kbd>del</kbd></button>
+      <button type="button" data-command="delete"><span>DELETE</span><kbd>Ctrl Alt D</kbd></button>
       <button type="button" data-command="data"><span>DATA</span><kbd>:</kbd></button>
     </nav>
 
@@ -110,7 +112,9 @@
           <div><dt>copy</dt><dd>copy current heading</dd></div>
           <div><dt>edit</dt><dd>edit current heading</dd></div>
           <div><dt>time</dt><dd>start / stop ticket timer</dd></div>
+          <div><dt>reset-time</dt><dd>reset elapsed time to zero</dd></div>
           <div><dt>delete</dt><dd>remove selected item</dd></div>
+          <div><dt>arrow keys</dt><dd>select / fold ticket items</dd></div>
           <div><dt>theme</dt><dd>switch color palette</dd></div>
           <div><dt>data</dt><dd>import / export / password</dd></div>
           <div><dt>lock</dt><dd>encrypt and close vault</dd></div>

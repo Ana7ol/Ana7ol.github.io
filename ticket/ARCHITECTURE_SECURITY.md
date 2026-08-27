@@ -54,7 +54,7 @@ Provides Catppuccin Mocha/Latte, Doom One, and Emacs Classic palettes. Emacs mod
 
 ## Data and lifecycle
 
-The decrypted state remains version 1 and contains contacts, items, and an update timestamp. Each item contains a generated UID, type, ticket metadata, text fields, reminder, accumulated `timeMs`, and an optional `timeStartedAt` timestamp. Only one timer is started by the UI at a time. An active timer survives reload or lock and continues until explicitly stopped.
+The decrypted state remains version 1 and contains contacts, items, and an update timestamp. Each item contains a generated UID, type, ticket metadata, text fields, optional note checklist, reminder, accumulated `timeMs`, and an optional `timeStartedAt` timestamp. Only one timer is started by the UI at a time. An active timer survives reload or lock and continues until explicitly stopped.
 
 On first use, the browser creates an empty vault. On every save, the application:
 

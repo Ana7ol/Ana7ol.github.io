@@ -167,6 +167,7 @@
       requester: "",
       hardware: "",
       asset: "",
+      checklist: [],
       reminder: null,
       timeMs: 0,
       timeStartedAt: null
@@ -189,7 +190,15 @@
     let fieldLines = [];
 
     function flushField() {
-      if (currentItem && currentField) currentItem[currentField] = trimBlock(fieldLines);
+      if (currentItem && currentField === "checklist") {
+        const block = trimBlock(fieldLines);
+        currentItem.checklist = block ? block.split("\n").map(function (line) {
+          const match = line.match(/^(?:-\s*)?\[([ xX])\]\s*(.*)$/);
+          return match ? { uid: randomId(), text: match[2].trim(), done: match[1].toLowerCase() === "x" } : null;
+        }).filter(Boolean) : [];
+      } else if (currentItem && currentField) {
+        currentItem[currentField] = trimBlock(fieldLines);
+      }
       currentField = null;
       fieldLines = [];
     }
@@ -249,7 +258,7 @@
         continue;
       }
 
-      match = line.match(/^\s*(PROBLEM|NOTES|SOLUTION|REQUESTER|HARDWARE|ASSET\s*\/\s*SERIAL)\s*$/i);
+      match = line.match(/^\s*(PROBLEM|NOTES|SOLUTION|REQUESTER|HARDWARE|CHECKLIST|ASSET\s*\/\s*SERIAL)\s*$/i);
       if (match) {
         flushField();
         const label = match[1].toUpperCase().replace(/\s+/g, " ");
@@ -259,6 +268,7 @@
           SOLUTION: "solution",
           REQUESTER: "requester",
           HARDWARE: "hardware",
+          CHECKLIST: "checklist",
           "ASSET / SERIAL": "asset"
         };
         currentField = fieldMap[label];
@@ -307,6 +317,14 @@
       lines.push(labelIndent + "ASSET / SERIAL", indentText(item.asset, valueIndent), "");
     } else if (item.kind !== "NOTE") {
       lines.push(labelIndent + "PROBLEM", indentText(item.problem, valueIndent), "");
+    }
+
+    if (item.kind === "NOTE" && Array.isArray(item.checklist) && item.checklist.length) {
+      lines.push(labelIndent + "CHECKLIST");
+      item.checklist.forEach(function (entry) {
+        lines.push(`${valueIndent}[${entry.done ? "x" : " "}] ${entry.text || ""}`);
+      });
+      lines.push("");
     }
 
     lines.push(labelIndent + "NOTES", indentText(item.notes, valueIndent), "");

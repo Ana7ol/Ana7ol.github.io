@@ -9,7 +9,8 @@
     emacs: "#f7f7f7",
     doom: "#282c34"
   };
-  let theme = "mocha";
+  const defaultTheme = "mocha";
+  let theme = defaultTheme;
 
   try {
     const saved = localStorage.getItem(storageKey);
@@ -22,5 +23,5 @@
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = themeColors[theme];
 
-  window.TicketThemes = { storageKey, themes, themeColors };
+  window.TicketThemes = { storageKey, themes, themeColors, defaultTheme };
 }());

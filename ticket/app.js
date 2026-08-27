@@ -5,7 +5,8 @@
   const ThemeConfig = window.TicketThemes || {
     storageKey: "tkfile.theme.v1",
     themes: ["mocha", "latte", "emacs", "doom"],
-    themeColors: { mocha: "#11111b", latte: "#eff1f5", emacs: "#f7f7f7", doom: "#282c34" }
+    themeColors: { mocha: "#11111b", latte: "#eff1f5", emacs: "#f7f7f7", doom: "#282c34" },
+    defaultTheme: "mocha"
   };
   const STORAGE_KEY = "tkfile.encrypted-vault.v1";
   const PBKDF2_ITERATIONS = 600000;
@@ -122,6 +123,16 @@
     };
   }
 
+  function newChecklistEntry(overrides) {
+    const entry = Object.assign({
+      uid: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `check-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      text: "",
+      done: false
+    }, overrides || {});
+    if (!entry.uid) entry.uid = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `check-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return entry;
+  }
+
   function normalizedItem(value) {
     const kind = ["TICKET", "HARDWARE", "NOTE"].includes(value && value.kind) ? value.kind : "TICKET";
     const itemValues = {
@@ -136,6 +147,13 @@
       requester: value && typeof value.requester === "string" ? value.requester : "",
       hardware: value && typeof value.hardware === "string" ? value.hardware : "",
       asset: value && typeof value.asset === "string" ? value.asset : "",
+      checklist: Array.isArray(value && value.checklist) ? value.checklist.slice(0, 200).map(function (entry) {
+        return newChecklistEntry({
+          uid: entry && typeof entry.uid === "string" && entry.uid ? entry.uid : undefined,
+          text: entry && typeof entry.text === "string" ? entry.text.slice(0, 5000) : "",
+          done: Boolean(entry && entry.done)
+        });
+      }) : [],
       reminder: null,
       timeMs: value && Number.isFinite(value.timeMs) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(value.timeMs))) : 0,
       timeStartedAt: null
@@ -330,6 +348,20 @@
     return `<div class="field${full}"><label>${escapeHtml(label)}</label>${control}</div>`;
   }
 
+  function checklistMarkup(item) {
+    const entries = Array.isArray(item.checklist) ? item.checklist : [];
+    const rows = entries.map(function (entry) {
+      const uid = escapeHtml(entry.uid);
+      return `<div class="checklist-row${entry.done ? " done" : ""}">` +
+        `<input class="checklist-toggle" type="checkbox" data-checklist-done="${uid}" aria-label="Mark checklist item done"${entry.done ? " checked" : ""}>` +
+        `<input class="checklist-text" type="text" data-checklist-text="${uid}" value="${escapeHtml(entry.text)}" aria-label="Checklist item">` +
+        `<button type="button" data-checklist-remove="${uid}" aria-label="Remove checklist item">×</button></div>`;
+    }).join("");
+    return `<div class="note-checklist field full"><div class="checklist-head"><label>CHECKLIST</label>` +
+      `<button type="button" data-item-action="add-checklist">ADD CHECKBOX</button></div>` +
+      `<div class="checklist-rows">${rows || `<p class="checklist-empty">No checkbox items yet.</p>`}</div></div>`;
+  }
+
   function renderItem(item) {
     const foldKey = `i:${item.uid}`;
     const open = collapsed.has(foldKey) ? "" : " open";
@@ -337,10 +369,15 @@
     const reminder = item.reminder
       ? `<span class="reminder-chip">REMINDER ${escapeHtml(Core.formatReminderTime(item.reminder.snoozedUntil || item.reminder.due))} | ${escapeHtml(item.reminder.message)}</span>`
       : "";
+    const trackedMilliseconds = Core.totalTimeMs(item);
     const trackedTime = `<span class="time-chip${item.timeStartedAt ? " running" : ""}" data-time-display="${escapeHtml(item.uid)}">` +
-      `${item.timeStartedAt ? "RECORDING" : "TIME"} ${escapeHtml(Core.formatDuration(Core.totalTimeMs(item)))}</span>`;
+      `${item.timeStartedAt ? "RECORDING" : "TIME"} ${escapeHtml(Core.formatDuration(trackedMilliseconds))}</span>`;
+    const resetTimeAction = trackedMilliseconds > 0 || item.timeStartedAt
+      ? `<button type="button" data-item-action="reset-timer">RESET TIME</button>`
+      : "";
     const actions = `<div class="item-actions">` +
       `<button type="button" data-item-action="toggle-timer">${item.timeStartedAt ? "STOP TIMER" : "START TIMER"}</button>` +
+      resetTimeAction +
       `<button type="button" data-item-action="copy-heading">COPY HEADING</button>` +
       `<button type="button" data-item-action="edit-heading">EDIT HEADING</button>` +
       `<button type="button" data-item-action="delete">DELETE</button></div>`;
@@ -350,7 +387,7 @@
     if (item.kind === "NOTE") {
       heading = `<span class="heading-copy"><span class="kind">NOTE</span><span class="pipe">|</span>` +
         `<span class="item-title">${escapeHtml(item.title || "Untitled note")}</span></span>${reminder}${trackedTime}`;
-      body = actions + fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
+      body = actions + checklistMarkup(item) + fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
     } else {
       const kind = item.kind === "HARDWARE" ? `<span class="kind">HARDWARE</span>` : "";
       heading = `<span class="heading-copy">${kind}` +
@@ -399,6 +436,20 @@
       `<div class="group-children">${children}</div></details>`;
   }
 
+  function growTextarea(control) {
+    if (!(control instanceof HTMLTextAreaElement) || control.offsetParent === null) return;
+    const currentHeight = control.getBoundingClientRect().height;
+    control.style.height = "auto";
+    const maximumHeight = Math.max(240, Math.floor(window.innerHeight * 0.7));
+    const requiredHeight = Math.min(maximumHeight, control.scrollHeight + 2);
+    control.style.height = `${Math.max(currentHeight, requiredHeight)}px`;
+    control.style.overflowY = control.scrollHeight > maximumHeight ? "auto" : "hidden";
+  }
+
+  function growOpenTextareas(root) {
+    (root || elements.ticketTree).querySelectorAll(".item[open] textarea").forEach(growTextarea);
+  }
+
   function renderTree() {
     if (!ticketState) return;
     const validSelection = ticketState.items.some((item) => item.uid === selectedItemId);
@@ -420,6 +471,7 @@
     elements.ticketTree.innerHTML = html;
     elements.emptyState.hidden = ticketState.items.length !== 0;
     elements.ticketCount.textContent = `${ticketState.items.length} ${ticketState.items.length === 1 ? "ITEM" : "ITEMS"}`;
+    setTimeout(() => growOpenTextareas(elements.ticketTree), 0);
   }
 
   function findItem(uid) {
@@ -434,6 +486,16 @@
     if (!node) return;
     node.classList.add("active");
     activeFoldKey = `i:${uid}`;
+    if (options && options.reveal) {
+      let ancestor = node.parentElement;
+      while (ancestor && ancestor !== elements.ticketTree) {
+        if (ancestor.matches("details.group[data-fold-key]")) {
+          ancestor.open = true;
+          collapsed.delete(ancestor.dataset.foldKey);
+        }
+        ancestor = ancestor.parentElement;
+      }
+    }
     if (options && options.open) {
       node.open = true;
       collapsed.delete(activeFoldKey);
@@ -454,7 +516,7 @@
 
   function currentTheme() {
     const theme = document.documentElement.dataset.theme;
-    return ThemeConfig.themes.includes(theme) ? theme : "mocha";
+    return ThemeConfig.themes.includes(theme) ? theme : (ThemeConfig.defaultTheme || "mocha");
   }
 
   function applyTheme(theme, announce) {
@@ -728,6 +790,62 @@
       : `Timer started for ${item.title || "selected item"}.`);
   }
 
+  async function resetTimer(uid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item) return showToast("Select a ticket or note first.");
+    if (Core.totalTimeMs(item) === 0 && !item.timeStartedAt) return showToast("The selected timer is already at zero.");
+    const result = await openDialog({
+      kicker: "RESET TIMER",
+      title: "RESET ELAPSED TIME?",
+      copy: `${item.title || "Selected item"}\n\nThe timer will stop and its recorded time will return to 00:00:00.`,
+      actions: [
+        { value: "cancel", label: "CANCEL" },
+        { value: "reset", label: "RESET TIME", danger: true }
+      ]
+    });
+    if (!result || result.action !== "reset") return;
+    item.timeMs = 0;
+    item.timeStartedAt = null;
+    await persistNow();
+    renderTree();
+    selectItem(item.uid, { open: true });
+    showToast("Elapsed time reset to 00:00:00.");
+  }
+
+  function focusChecklistEntry(entryUid) {
+    const control = Array.from(elements.ticketTree.querySelectorAll("[data-checklist-text]")).find((node) => node.dataset.checklistText === entryUid);
+    if (control) {
+      control.focus();
+      control.select();
+    }
+  }
+
+  function addChecklistItem(uid, afterEntryUid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item || item.kind !== "NOTE") return showToast("Select a note first.");
+    const entry = newChecklistEntry();
+    const afterIndex = afterEntryUid ? item.checklist.findIndex((candidate) => candidate.uid === afterEntryUid) : -1;
+    if (afterIndex >= 0) item.checklist.splice(afterIndex + 1, 0, entry);
+    else item.checklist.push(entry);
+    collapsed.delete(`i:${item.uid}`);
+    queueSave();
+    renderTree();
+    selectItem(item.uid, { open: true });
+    setTimeout(() => focusChecklistEntry(entry.uid), 0);
+  }
+
+  function removeChecklistItem(uid, entryUid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item || item.kind !== "NOTE") return;
+    const index = item.checklist.findIndex((entry) => entry.uid === entryUid);
+    if (index < 0) return;
+    item.checklist.splice(index, 1);
+    queueSave();
+    renderTree();
+    selectItem(item.uid, { open: true });
+    showToast("Checklist item removed.");
+  }
+
   async function deleteItem(uid) {
     const item = findItem(uid || selectedItemId);
     if (!item) return showToast("Select a ticket or note first.");
@@ -828,6 +946,31 @@
     const next = tickets[(currentIndex + 1 + tickets.length) % tickets.length];
     selectItem(next.uid, { open: true, scroll: true, flash: true });
     showToast(`Selected ticket ${next.ticketId}.`);
+  }
+
+  function navigateItems(direction) {
+    const items = Core.sortItems(ticketState.items);
+    if (!items.length) return showToast("No tickets or notes were found.");
+    const currentIndex = items.findIndex((item) => item.uid === selectedItemId);
+    const startIndex = currentIndex < 0 ? (direction > 0 ? -1 : 0) : currentIndex;
+    const nextIndex = (startIndex + direction + items.length) % items.length;
+    const next = items[nextIndex];
+    selectItem(next.uid, { reveal: true, scroll: true, flash: true });
+  }
+
+  function setSelectedItemOpen(open) {
+    const item = findItem(selectedItemId);
+    if (!item) return;
+    const node = Array.from(elements.ticketTree.querySelectorAll(".item[data-item-id]")).find((entry) => entry.dataset.itemId === item.uid);
+    if (!node) return;
+    node.open = open;
+    activeFoldKey = `i:${item.uid}`;
+    if (open) {
+      collapsed.delete(activeFoldKey);
+      setTimeout(() => growOpenTextareas(node), 0);
+    } else {
+      collapsed.add(activeFoldKey);
+    }
   }
 
   function openCurrentTicket() {
@@ -1088,6 +1231,8 @@
       contacts: editContacts,
       time: toggleTimer,
       timer: toggleTimer,
+      "reset-time": resetTimer,
+      reset: resetTimer,
       fold: toggleFold,
       copy: copyHeading,
       edit: editHeading,
@@ -1169,12 +1314,20 @@
     elements.modalClose.addEventListener("click", () => elements.modal.close("cancel"));
 
     document.addEventListener("click", function (event) {
+      const checklistRemove = event.target.closest("[data-checklist-remove]");
+      if (checklistRemove && !elements.app.hidden) {
+        const itemNode = checklistRemove.closest(".item[data-item-id]");
+        if (itemNode) removeChecklistItem(itemNode.dataset.itemId, checklistRemove.dataset.checklistRemove);
+        return;
+      }
       const itemAction = event.target.closest("[data-item-action]");
       if (itemAction && !elements.app.hidden) {
         const itemNode = itemAction.closest(".item[data-item-id]");
         if (!itemNode) return;
         selectItem(itemNode.dataset.itemId);
         if (itemAction.dataset.itemAction === "toggle-timer") toggleTimer(itemNode.dataset.itemId);
+        if (itemAction.dataset.itemAction === "reset-timer") resetTimer(itemNode.dataset.itemId);
+        if (itemAction.dataset.itemAction === "add-checklist") addChecklistItem(itemNode.dataset.itemId);
         if (itemAction.dataset.itemAction === "copy-heading") copyHeading(itemNode.dataset.itemId);
         if (itemAction.dataset.itemAction === "edit-heading") editHeading(itemNode.dataset.itemId);
         if (itemAction.dataset.itemAction === "delete") deleteItem(itemNode.dataset.itemId);
@@ -1199,6 +1352,7 @@
       if (!(target instanceof HTMLDetailsElement) || !target.dataset.foldKey) return;
       if (target.open) collapsed.delete(target.dataset.foldKey);
       else collapsed.add(target.dataset.foldKey);
+      if (target.open && target.classList.contains("item")) setTimeout(() => growOpenTextareas(target), 0);
     }, true);
 
     elements.ticketTree.addEventListener("focusin", function (event) {
@@ -1208,12 +1362,36 @@
     });
 
     elements.ticketTree.addEventListener("input", function (event) {
-      const control = event.target.closest("[data-field]");
       const itemNode = event.target.closest(".item[data-item-id]");
-      if (!control || !itemNode) return;
+      if (!itemNode) return;
       const item = findItem(itemNode.dataset.itemId);
       if (!item) return;
+      const checklistText = event.target.closest("[data-checklist-text]");
+      if (checklistText && item.kind === "NOTE") {
+        const entry = item.checklist.find((candidate) => candidate.uid === checklistText.dataset.checklistText);
+        if (entry) {
+          entry.text = checklistText.value;
+          queueSave();
+        }
+        return;
+      }
+      const control = event.target.closest("[data-field]");
+      if (!control) return;
       item[control.dataset.field] = control.value;
+      if (control instanceof HTMLTextAreaElement) growTextarea(control);
+      queueSave();
+    });
+
+    elements.ticketTree.addEventListener("change", function (event) {
+      const checkbox = event.target.closest("[data-checklist-done]");
+      const itemNode = event.target.closest(".item[data-item-id]");
+      if (!checkbox || !itemNode) return;
+      const item = findItem(itemNode.dataset.itemId);
+      if (!item || item.kind !== "NOTE") return;
+      const entry = item.checklist.find((candidate) => candidate.uid === checkbox.dataset.checklistDone);
+      if (!entry) return;
+      entry.done = checkbox.checked;
+      checkbox.closest(".checklist-row").classList.toggle("done", entry.done);
       queueSave();
     });
 
@@ -1226,10 +1404,39 @@
 
     document.addEventListener("keydown", function (event) {
       if (elements.app.hidden || elements.modal.open) return;
+      const checklistText = event.target.closest && event.target.closest("[data-checklist-text]");
+      if (event.key === "Enter" && checklistText) {
+        const itemNode = checklistText.closest(".item[data-item-id]");
+        if (itemNode) {
+          event.preventDefault();
+          addChecklistItem(itemNode.dataset.itemId, checklistText.dataset.checklistText);
+        }
+        return;
+      }
+      const editable = event.target.matches("input, textarea, select, [contenteditable='true']");
+      if (!editable && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          return navigateItems(1);
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          return navigateItems(-1);
+        }
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          return setSelectedItemOpen(true);
+        }
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          return setSelectedItemOpen(false);
+        }
+      }
       const key = event.key.toLowerCase();
       let command = null;
       if (event.ctrlKey && event.altKey && key === "t") command = "new";
       else if (event.ctrlKey && event.altKey && key === "f") command = "fold";
+      else if (event.ctrlKey && event.altKey && key === "d") command = "delete";
       else if (event.ctrlKey && event.altKey && key === "m") command = "theme";
       else if (event.ctrlKey && event.altKey && key === "l") command = "lock";
       else if (event.altKey && !event.ctrlKey && key === "r") command = "remind";
