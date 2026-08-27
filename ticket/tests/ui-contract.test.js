@@ -51,3 +51,10 @@ test("makes note creation explicit and restores editable classic shortcuts", () 
   assert.doesNotMatch(html, /KEY MODE/);
   assert.doesNotMatch(app, /handleKeyboardModeKey/);
 });
+
+test("uses Enter as the affirmative action in every confirmation dialog", () => {
+  assert.match(app, /if \(event\.target\.matches\("textarea"\)\) return/);
+  assert.match(app, /querySelector\("\.primary-action"\) \|\| elements\.modalActions\.querySelector\("\.danger-action"\)/);
+  assert.match(app, /requestSubmit\(affirmativeAction\)/);
+  assert.doesNotMatch(app, /event\.target\.matches\("textarea, button"\)/);
+});

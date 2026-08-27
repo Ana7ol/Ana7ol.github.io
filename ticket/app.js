@@ -787,11 +787,11 @@
       }
       function onKeyDown(event) {
         if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
-        if (event.target.matches("textarea, button")) return;
-        const primaryAction = elements.modalActions.querySelector(".primary-action");
-        if (!primaryAction) return;
+        if (event.target.matches("textarea")) return;
+        const affirmativeAction = elements.modalActions.querySelector(".primary-action") || elements.modalActions.querySelector(".danger-action");
+        if (!affirmativeAction) return;
         event.preventDefault();
-        elements.modalForm.requestSubmit(primaryAction);
+        elements.modalForm.requestSubmit(affirmativeAction);
       }
       function onClose() {
         elements.modalForm.removeEventListener("submit", onSubmit);
@@ -805,7 +805,8 @@
       elements.modal.showModal();
       if (typeof config.onReady === "function") config.onReady(elements.modalForm);
       const first = elements.modalFields.querySelector("input, textarea, select");
-      if (first) setTimeout(() => first.focus(), 0);
+      const affirmativeAction = elements.modalActions.querySelector(".primary-action") || elements.modalActions.querySelector(".danger-action");
+      if (first || affirmativeAction) setTimeout(() => (first || affirmativeAction).focus(), 0);
     });
   }
 
