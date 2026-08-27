@@ -40,6 +40,10 @@ Defines the setup/unlock screen, ticket tree, command toolbar, help, modal dialo
 
 Reads only the theme preference from `localStorage` and applies it before CSS is painted. It does not read or decrypt ticket data.
 
+### `shortcuts.js`
+
+Defines the classic keyboard defaults and the commands available in the shortcut editor. Personal overrides are stored separately in browser `localStorage` under `ticket-forge.shortcuts.v1`; they contain only command names and key combinations, never ticket content. The KEYS dialog can replace, clear, or restore these bindings without changing the encrypted vault.
+
 ### `core.js`
 
 A dependency-free, environment-neutral module. It validates ticket identifiers, parses reminder and duration values, normalizes headings, groups dates, and imports/exports the TKFILE text format. Node tests load this file directly.

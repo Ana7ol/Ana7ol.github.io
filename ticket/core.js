@@ -156,22 +156,36 @@
     if (Boolean(event.ctrlKey) !== modifiers.includes("ctrl")) return false;
     if (Boolean(event.altKey) !== modifiers.includes("alt")) return false;
     if (Boolean(event.metaKey) !== modifiers.includes("meta")) return false;
-    if (modifiers.includes("shift") && !event.shiftKey) return false;
-    const aliases = { esc: "escape", space: " " };
+    const implicitShift = Boolean(event.shiftKey) && key.length === 1 && !/[a-z0-9 ]/i.test(key);
+    if (Boolean(event.shiftKey) !== modifiers.includes("shift") && !implicitShift) return false;
+    const aliases = { esc: "escape", space: " ", plus: "+", comma: "," };
     return String(event.key || "").toLowerCase() === (aliases[key] || key);
   }
 
-  function resolveShortcutSequence(currentBuffer, key, sequences) {
-    const entries = Object.entries(sequences || {}).map(function ([command, sequence]) {
-      return [command, String(sequence || "").trim().toLowerCase()];
-    }).filter((entry) => entry[1]);
-    const pressed = String(key || "").toLowerCase();
-    const candidate = (String(currentBuffer || "") + pressed).slice(-12);
-    const exact = entries.find((entry) => entry[1] === candidate);
-    if (exact) return { command: exact[0], buffer: "", invalid: false };
-    if (entries.some((entry) => entry[1].startsWith(candidate))) return { command: null, buffer: candidate, invalid: false };
-    const restart = entries.some((entry) => entry[1].startsWith(pressed)) ? pressed : "";
-    return { command: null, buffer: restart, invalid: !restart };
+  function shortcutFromEvent(event) {
+    const rawKey = String(event && event.key || "");
+    if (!rawKey || ["Control", "Alt", "Shift", "Meta"].includes(rawKey)) return null;
+    const namedKeys = {
+      " ": "Space",
+      Esc: "Escape",
+      Del: "Delete",
+      Up: "ArrowUp",
+      Down: "ArrowDown",
+      Left: "ArrowLeft",
+      Right: "ArrowRight",
+      "+": "Plus",
+      ",": "Comma"
+    };
+    let key = namedKeys[rawKey] || rawKey;
+    if (key.length === 1 && /[a-z]/i.test(key)) key = key.toUpperCase();
+    const parts = [];
+    if (event.ctrlKey) parts.push("Ctrl");
+    if (event.altKey) parts.push("Alt");
+    if (event.metaKey) parts.push("Meta");
+    const shiftedSymbol = key.length === 1 && !/[a-z0-9 ]/i.test(key);
+    if (event.shiftKey && !shiftedSymbol) parts.push("Shift");
+    parts.push(key);
+    return parts.join("+");
   }
 
   function randomId() {
@@ -410,7 +424,7 @@
     parseDuration,
     totalTimeMs,
     shortcutMatches,
-    resolveShortcutSequence,
+    shortcutFromEvent,
     localDateString,
     displayDate,
     blankItem,

@@ -22,16 +22,16 @@ test("uses Ticket Forge branding, its generated icon, and Mocha for first visits
 test("exposes timer reset and the requested deletion shortcut", () => {
   assert.match(app, /async function resetTimer/);
   assert.match(app, /data-item-action="reset-timer"/);
-  assert.match(shortcuts, /"Ctrl\+Alt\+D": "delete"/);
+  assert.match(shortcuts, /delete: \["Ctrl\+Alt\+D", "Delete"\]/);
   assert.match(html, /<kbd>Ctrl Alt D<\/kbd>/);
 });
 
 test("supports arrow navigation, note checklists, and growing text areas", () => {
   assert.match(app, /function navigateItems/);
-  assert.match(app, /event\.key === "ArrowDown"/);
-  assert.match(app, /event\.key === "ArrowUp"/);
-  assert.match(app, /event\.key === "ArrowRight"/);
-  assert.match(app, /event\.key === "ArrowLeft"/);
+  assert.match(shortcuts, /"move-next": "ArrowDown"/);
+  assert.match(shortcuts, /"move-previous": "ArrowUp"/);
+  assert.match(shortcuts, /expand: "ArrowRight"/);
+  assert.match(shortcuts, /collapse: "ArrowLeft"/);
   assert.match(app, /function checklistMarkup/);
   assert.match(app, /function growTextarea/);
   assert.match(styles, /\.checklist-toggle:checked::after/);
@@ -39,12 +39,15 @@ test("supports arrow navigation, note checklists, and growing text areas", () =>
   assert.match(styles, /resize: vertical/);
 });
 
-test("makes note creation explicit and provides editable exact-sequence key mode", () => {
+test("makes note creation explicit and restores editable classic shortcuts", () => {
   assert.match(app, /NOTE TITLE \(NO ID NEEDED\)/);
   assert.match(app, /Notes are local text records and do not use ticket IDs/);
   assert.match(html, /<script src="shortcuts\.js"><\/script>\s*<script src="app\.js"><\/script>/);
-  assert.match(shortcuts, /"Ctrl\+Alt\+K": "key-mode"/);
-  assert.match(shortcuts, /fold: "ff"/);
-  assert.match(app, /function handleKeyboardModeKey/);
-  assert.match(app, /event\.key === "Escape"/);
+  assert.match(shortcuts, /fold: "Ctrl\+Alt\+F"/);
+  assert.match(shortcuts, /storageKey: "ticket-forge\.shortcuts\.v1"/);
+  assert.match(app, /async function editShortcuts/);
+  assert.match(app, /RESTORE OLD DEFAULTS/);
+  assert.match(app, /localStorage\.setItem\(ShortcutConfig\.storageKey/);
+  assert.doesNotMatch(html, /KEY MODE/);
+  assert.doesNotMatch(app, /handleKeyboardModeKey/);
 });

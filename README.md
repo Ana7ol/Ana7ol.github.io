@@ -6,7 +6,7 @@ The application source is in `ticket/`:
 
 - `index.html` contains the accessible page, command toolbar, dialogs, and Content Security Policy.
 - `theme-init.js` restores the selected theme before the page renders.
-- `shortcuts.js` is the user-editable global and KEY MODE shortcut map.
+- `shortcuts.js` defines the classic default shortcuts and the editable command catalog.
 - `core.js` contains pure ticket parsing, formatting, grouping, and time helpers.
 - `app.js` contains vault encryption, persistence, commands, reminders, timers, note checklists, and UI behavior.
 - `styles.css` contains all four themes and the Emacs fullscreen layout.
@@ -24,6 +24,6 @@ See [ticket/ARCHITECTURE_SECURITY.md](ticket/ARCHITECTURE_SECURITY.md) for the a
 
 ## Keyboard customization
 
-All configurable keyboard mappings live in `ticket/shortcuts.js`. `global` entries work throughout the unlocked app. `sequences` work only after entering KEY MODE with `Ctrl+Alt+K`; press `Escape` to leave it. The default fold sequence is `ff`.
+The original shortcuts are the defaults again: Ctrl+Alt+T creates an item, Ctrl+Alt+F folds, Ctrl+Alt+D or Delete removes, Ctrl+Alt+M changes theme, Ctrl+Alt+L locks, Alt+R/N/O/C/P/T run their toolbar commands, colon focuses the command line, and the arrow keys navigate and fold items. KEY MODE and double-tap sequences are no longer used.
 
-Use the KEYS toolbar button, type `keys` in the command line, or type `gk` in KEY MODE to see the active mapping. After editing `shortcuts.js`, reload the page.
+Open the KEYS toolbar button or type `keys` in the command line to create personal mappings. Click a command field and press the desired combination; Backspace clears it. Duplicate combinations move to the newly selected command. SAVE SHORTCUTS stores the map in this browser, while RESTORE OLD DEFAULTS removes the override. Developers can change the starting command catalog and defaults in `ticket/shortcuts.js`.
