@@ -8,6 +8,11 @@
     themeColors: { mocha: "#11111b", latte: "#eff1f5", emacs: "#f7f7f7", doom: "#282c34" },
     defaultTheme: "mocha"
   };
+  const ShortcutConfig = window.TicketShortcutConfig || {
+    sequenceTimeoutMs: 1400,
+    global: { "Ctrl+Alt+K": "key-mode", "Ctrl+Alt+T": "new", "Ctrl+Alt+D": "delete" },
+    sequences: { new: "nn", fold: "ff", delete: "dd", keys: "gk", lock: "qq" }
+  };
   const STORAGE_KEY = "tkfile.encrypted-vault.v1";
   const PBKDF2_ITERATIONS = 600000;
   const AUTO_LOCK_MS = 15 * 60 * 1000;
@@ -46,6 +51,8 @@
     modalActions: document.getElementById("modal-actions"),
     modalClose: document.getElementById("modal-close"),
     toast: document.getElementById("toast"),
+    keyboardMode: document.getElementById("keyboard-mode"),
+    keyboardBuffer: document.getElementById("keyboard-buffer"),
     tkImportInput: document.getElementById("tk-import-input"),
     vaultImportInput: document.getElementById("vault-import-input")
   };
@@ -65,6 +72,9 @@
   let reminderTimer = null;
   let timeDisplayTimer = null;
   let reminderCheckRunning = false;
+  let keyboardModeActive = false;
+  let shortcutBuffer = "";
+  let shortcutTimer = null;
   const collapsed = new Set();
   const acknowledgedReminders = new Set();
 
@@ -286,6 +296,7 @@
   async function lockVault(options) {
     const skipSave = options && options.skipSave;
     if (!skipSave) await persistNow();
+    setKeyboardMode(false, false);
     clearTimeout(autoLockTimer);
     clearInterval(reminderTimer);
     clearInterval(timeDisplayTimer);
@@ -514,6 +525,101 @@
     toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 2800);
   }
 
+  function shortcutSequenceEntries() {
+    return Object.entries(ShortcutConfig.sequences || {}).map(function ([command, sequence]) {
+      return [command, String(sequence || "").trim().toLowerCase()];
+    }).filter((entry) => entry[1]);
+  }
+
+  function configuredGlobalCommand(event) {
+    const editable = event.target.matches("input, textarea, select, [contenteditable='true']");
+    for (const [shortcut, command] of Object.entries(ShortcutConfig.global || {})) {
+      if (!Core.shortcutMatches(event, shortcut)) continue;
+      const hasModifier = /(?:^|\+)(?:ctrl|alt|meta)(?:\+|$)/i.test(shortcut);
+      if (editable && !hasModifier) continue;
+      return command;
+    }
+    return null;
+  }
+
+  function setShortcutBuffer(value) {
+    shortcutBuffer = value;
+    elements.keyboardBuffer.textContent = value || "··";
+  }
+
+  function setKeyboardMode(active, announce) {
+    keyboardModeActive = Boolean(active && ticketState);
+    clearTimeout(shortcutTimer);
+    shortcutTimer = null;
+    setShortcutBuffer("");
+    elements.keyboardMode.hidden = !keyboardModeActive;
+    document.documentElement.classList.toggle("keyboard-mode-active", keyboardModeActive);
+    if (keyboardModeActive && document.activeElement && typeof document.activeElement.blur === "function") document.activeElement.blur();
+    if (announce !== false && ticketState) showToast(keyboardModeActive ? "Key mode active. Press Esc to leave." : "Key mode closed.");
+  }
+
+  function refreshShortcutLabels() {
+    const globalEntries = Object.entries(ShortcutConfig.global || {});
+    document.querySelectorAll("button[data-command] kbd").forEach(function (label) {
+      const command = label.closest("button").dataset.command;
+      const sequence = ShortcutConfig.sequences && ShortcutConfig.sequences[command];
+      const globalShortcut = globalEntries.find((entry) => entry[1] === command);
+      if (sequence) label.textContent = sequence;
+      else if (globalShortcut) label.textContent = globalShortcut[0].replace(/\+/g, " ");
+      label.closest("button").title = [sequence ? `KEY MODE: ${sequence}` : "", globalShortcut ? `GLOBAL: ${globalShortcut[0]}` : ""].filter(Boolean).join(" · ");
+    });
+  }
+
+  async function showShortcutHelp() {
+    const modeShortcut = Object.entries(ShortcutConfig.global || {}).find((entry) => entry[1] === "key-mode");
+    const sequences = shortcutSequenceEntries().sort((a, b) => a[1].localeCompare(b[1])).map(([command, sequence]) => `${sequence.padEnd(4, " ")} ${command}`).join("\n");
+    const globals = Object.entries(ShortcutConfig.global || {}).map(([shortcut, command]) => `${shortcut.padEnd(14, " ")} ${command}`).join("\n");
+    await openDialog({
+      kicker: "KEYBOARD",
+      title: "EDITABLE SHORTCUT MAP",
+      copy: `Enter key mode with ${modeShortcut ? modeShortcut[0] : "the configured key"}; press Esc to leave.\n\nKEY MODE\n${sequences}\n\nGLOBAL\n${globals}\n\nEdit ticket/shortcuts.js to change these mappings, then reload the page.`,
+      actions: [{ value: "close", label: "CLOSE", primary: true }]
+    });
+  }
+
+  function handleKeyboardModeKey(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setKeyboardMode(false, true);
+      return true;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey) return false;
+    const arrowCommands = {
+      ArrowDown: () => navigateItems(1),
+      ArrowUp: () => navigateItems(-1),
+      ArrowRight: () => setSelectedItemOpen(true),
+      ArrowLeft: () => setSelectedItemOpen(false)
+    };
+    if (arrowCommands[event.key]) {
+      event.preventDefault();
+      arrowCommands[event.key]();
+      return true;
+    }
+    if (event.key === "Backspace") {
+      event.preventDefault();
+      setShortcutBuffer(shortcutBuffer.slice(0, -1));
+      return true;
+    }
+    if (event.key.length !== 1) return false;
+    event.preventDefault();
+    clearTimeout(shortcutTimer);
+    const resolution = Core.resolveShortcutSequence(shortcutBuffer, event.key, ShortcutConfig.sequences);
+    if (resolution.command) {
+      setShortcutBuffer("");
+      runCommand(resolution.command);
+      return true;
+    }
+    setShortcutBuffer(resolution.buffer);
+    if (resolution.invalid) elements.keyboardBuffer.textContent = "×";
+    shortcutTimer = setTimeout(() => setShortcutBuffer(""), Number(ShortcutConfig.sequenceTimeoutMs) || 1400);
+    return true;
+  }
+
   function currentTheme() {
     const theme = document.documentElement.dataset.theme;
     return ThemeConfig.themes.includes(theme) ? theme : (ThemeConfig.defaultTheme || "mocha");
@@ -650,6 +756,7 @@
       elements.modalForm.addEventListener("keydown", onKeyDown);
       elements.modal.addEventListener("close", onClose);
       elements.modal.showModal();
+      if (typeof config.onReady === "function") config.onReady(elements.modalForm);
       const first = elements.modalFields.querySelector("input, textarea, select");
       if (first) setTimeout(() => first.focus(), 0);
     });
@@ -666,13 +773,28 @@
           { value: "HARDWARE", label: "2 — NEW HARDWARE" },
           { value: "NOTE", label: "3 — NOTE" }
         ] },
-        { name: "value", label: "TICKET ID + TITLE / NOTE TITLE", required: true, placeholder: "4564 Printer problem" },
+        { name: "value", label: "TICKET ID + TITLE", required: true, placeholder: "4564 Printer problem" },
         { name: "created", label: "DATE", type: "date", required: true, value: Core.localDateString(new Date()) }
       ],
       actions: [
         { value: "cancel", label: "CANCEL" },
         { value: "create", label: "CREATE", primary: true }
-      ]
+      ],
+      onReady: function () {
+        const kindControl = document.getElementById("dialog-kind");
+        const valueControl = document.getElementById("dialog-value");
+        const valueLabel = elements.modalFields.querySelector('label[for="dialog-value"]');
+        function updateCreatePrompt() {
+          const isNote = kindControl.value === "NOTE";
+          valueLabel.textContent = isNote ? "NOTE TITLE (NO ID NEEDED)" : "TICKET ID + TITLE";
+          valueControl.placeholder = isNote ? "Morning handover" : "4564 Printer problem";
+          elements.modalCopy.textContent = isNote
+            ? "Notes are local text records and do not use ticket IDs. Enter only the note title."
+            : "Paste the ticket ID and title together.\nExamples: 4564 Printer problem · 4564 | Printer problem · full ITSM URL + title";
+        }
+        kindControl.addEventListener("change", updateCreatePrompt);
+        updateCreatePrompt();
+      }
     });
     if (!result || result.action !== "create") return;
     const kind = result.values.kind;
@@ -1238,11 +1360,25 @@
       edit: editHeading,
       delete: deleteItem,
       remove: deleteItem,
+      checklist: () => addChecklistItem(),
       theme: chooseTheme,
       data: dataMenu,
       export: dataMenu,
       import: dataMenu,
+      "export-tk": exportTk,
+      "import-tk": importTk,
+      "export-vault": exportVault,
+      "import-vault": () => importVault(elements.vaultImportInput),
       password: changePassword,
+      "move-next": () => navigateItems(1),
+      "move-previous": () => navigateItems(-1),
+      expand: () => setSelectedItemOpen(true),
+      collapse: () => setSelectedItemOpen(false),
+      keys: showShortcutHelp,
+      "focus-command": function () {
+        setKeyboardMode(false, false);
+        elements.commandInput.focus();
+      },
       lock: lockVault,
       help: function () {
         elements.helpPanel.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1404,6 +1540,14 @@
 
     document.addEventListener("keydown", function (event) {
       if (elements.app.hidden || elements.modal.open) return;
+      const globalCommand = configuredGlobalCommand(event);
+      if (globalCommand) {
+        event.preventDefault();
+        if (globalCommand === "key-mode") setKeyboardMode(!keyboardModeActive, true);
+        else runCommand(globalCommand);
+        return;
+      }
+      if (keyboardModeActive && handleKeyboardModeKey(event)) return;
       const checklistText = event.target.closest && event.target.closest("[data-checklist-text]");
       if (event.key === "Enter" && checklistText) {
         const itemNode = checklistText.closest(".item[data-item-id]");
@@ -1432,28 +1576,6 @@
           return setSelectedItemOpen(false);
         }
       }
-      const key = event.key.toLowerCase();
-      let command = null;
-      if (event.ctrlKey && event.altKey && key === "t") command = "new";
-      else if (event.ctrlKey && event.altKey && key === "f") command = "fold";
-      else if (event.ctrlKey && event.altKey && key === "d") command = "delete";
-      else if (event.ctrlKey && event.altKey && key === "m") command = "theme";
-      else if (event.ctrlKey && event.altKey && key === "l") command = "lock";
-      else if (event.altKey && !event.ctrlKey && key === "r") command = "remind";
-      else if (event.altKey && !event.ctrlKey && key === "n") command = "next";
-      else if (event.altKey && !event.ctrlKey && key === "o") command = "open";
-      else if (event.altKey && !event.ctrlKey && key === "c") command = "status";
-      else if (event.altKey && !event.ctrlKey && key === "p") command = "contact";
-      else if (event.altKey && !event.ctrlKey && key === "t") command = "time";
-      else if (event.key === "Delete" && !event.target.matches("input, textarea, select")) command = "delete";
-      else if (event.key === ":" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.target.matches("input, textarea, select")) {
-        event.preventDefault();
-        return elements.commandInput.focus();
-      }
-      if (command) {
-        event.preventDefault();
-        runCommand(command);
-      }
     });
 
     ["pointerdown", "keydown", "touchstart"].forEach(function (eventName) {
@@ -1467,6 +1589,7 @@
 
   function init() {
     applyTheme(currentTheme(), false);
+    refreshShortcutLabels();
     bindEvents();
     if (!window.isSecureContext || !window.crypto || !window.crypto.subtle) {
       elements.authCopy.textContent = "This browser cannot open an encrypted vault. Use the HTTPS GitHub Pages address in a current browser.";

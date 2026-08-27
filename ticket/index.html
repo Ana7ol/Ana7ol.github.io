@@ -83,6 +83,7 @@
       <button type="button" data-command="fold"><span>FOLD</span><kbd>Ctrl Alt F</kbd></button>
       <button type="button" data-command="delete"><span>DELETE</span><kbd>Ctrl Alt D</kbd></button>
       <button type="button" data-command="data"><span>DATA</span><kbd>:</kbd></button>
+      <button type="button" data-command="keys"><span>KEYS</span><kbd>gk</kbd></button>
     </nav>
 
     <main>
@@ -115,6 +116,8 @@
           <div><dt>reset-time</dt><dd>reset elapsed time to zero</dd></div>
           <div><dt>delete</dt><dd>remove selected item</dd></div>
           <div><dt>arrow keys</dt><dd>select / fold ticket items</dd></div>
+          <div><dt>key mode</dt><dd>Ctrl Alt K / Esc exits</dd></div>
+          <div><dt>keys</dt><dd>show editable shortcut map</dd></div>
           <div><dt>theme</dt><dd>switch color palette</dd></div>
           <div><dt>data</dt><dd>import / export / password</dd></div>
           <div><dt>lock</dt><dd>encrypt and close vault</dd></div>
@@ -129,6 +132,12 @@
       <input id="command-input" name="command" type="text" placeholder="type a command…" spellcheck="false">
       <span class="command-hint">HELP ↵</span>
     </form>
+  </div>
+
+  <div id="keyboard-mode" class="keyboard-mode" role="status" aria-live="polite" hidden>
+    <strong>KEY MODE</strong>
+    <span id="keyboard-buffer">··</span>
+    <span>Esc exits · type gk for shortcuts</span>
   </div>
 
   <dialog id="modal" aria-labelledby="modal-title">
@@ -149,6 +158,7 @@
   <input id="vault-import-input" type="file" accept="application/json,.json,.ticket-vault" hidden>
 
   <script src="core.js"></script>
+  <script src="shortcuts.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

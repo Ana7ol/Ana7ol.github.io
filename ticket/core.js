@@ -148,6 +148,32 @@
     return Math.min(Number.MAX_SAFE_INTEGER, base + Math.max(0, now - started));
   }
 
+  function shortcutMatches(event, shortcut) {
+    const parts = String(shortcut || "").split("+").map((part) => part.trim()).filter(Boolean);
+    if (!parts.length) return false;
+    const key = parts.pop().toLowerCase();
+    const modifiers = parts.map((part) => part.toLowerCase());
+    if (Boolean(event.ctrlKey) !== modifiers.includes("ctrl")) return false;
+    if (Boolean(event.altKey) !== modifiers.includes("alt")) return false;
+    if (Boolean(event.metaKey) !== modifiers.includes("meta")) return false;
+    if (modifiers.includes("shift") && !event.shiftKey) return false;
+    const aliases = { esc: "escape", space: " " };
+    return String(event.key || "").toLowerCase() === (aliases[key] || key);
+  }
+
+  function resolveShortcutSequence(currentBuffer, key, sequences) {
+    const entries = Object.entries(sequences || {}).map(function ([command, sequence]) {
+      return [command, String(sequence || "").trim().toLowerCase()];
+    }).filter((entry) => entry[1]);
+    const pressed = String(key || "").toLowerCase();
+    const candidate = (String(currentBuffer || "") + pressed).slice(-12);
+    const exact = entries.find((entry) => entry[1] === candidate);
+    if (exact) return { command: exact[0], buffer: "", invalid: false };
+    if (entries.some((entry) => entry[1].startsWith(candidate))) return { command: null, buffer: candidate, invalid: false };
+    const restart = entries.some((entry) => entry[1].startsWith(pressed)) ? pressed : "";
+    return { command: null, buffer: restart, invalid: !restart };
+  }
+
   function randomId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
     return `item-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -383,6 +409,8 @@
     formatDuration,
     parseDuration,
     totalTimeMs,
+    shortcutMatches,
+    resolveShortcutSequence,
     localDateString,
     displayDate,
     blankItem,

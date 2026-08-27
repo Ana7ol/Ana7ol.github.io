@@ -29,6 +29,18 @@ test("formats, parses, and totals tracked ticket time", () => {
   assert.equal(Core.totalTimeMs({ timeMs: 60000, timeStartedAt: "2026-08-27T10:00:00.000Z" }, "2026-08-27T10:02:30.000Z"), 210000);
 });
 
+test("matches editable global shortcuts and resolves exact key-mode sequences", () => {
+  assert.equal(Core.shortcutMatches({ key: "D", ctrlKey: true, altKey: true, metaKey: false }, "Ctrl+Alt+D"), true);
+  assert.equal(Core.shortcutMatches({ key: "D", ctrlKey: true, altKey: false, metaKey: false }, "Ctrl+Alt+D"), false);
+  assert.equal(Core.shortcutMatches({ key: ":", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false }, ":"), true);
+
+  const sequences = { fold: "ff", edit: "ee" };
+  assert.deepEqual(Core.resolveShortcutSequence("", "f", sequences), { command: null, buffer: "f", invalid: false });
+  assert.deepEqual(Core.resolveShortcutSequence("f", "f", sequences), { command: "fold", buffer: "", invalid: false });
+  assert.deepEqual(Core.resolveShortcutSequence("f", "e", sequences), { command: null, buffer: "e", invalid: false });
+  assert.deepEqual(Core.resolveShortcutSequence("", "z", sequences), { command: null, buffer: "", invalid: true });
+});
+
 test("round-trips standard, hardware, and note items through .tk text", () => {
   const items = [
     Core.blankItem({

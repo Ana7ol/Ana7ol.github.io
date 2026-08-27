@@ -10,6 +10,7 @@ const html = fs.readFileSync(path.join(ticketRoot, "index.html"), "utf8");
 const app = fs.readFileSync(path.join(ticketRoot, "app.js"), "utf8");
 const styles = fs.readFileSync(path.join(ticketRoot, "styles.css"), "utf8");
 const themeInit = fs.readFileSync(path.join(ticketRoot, "theme-init.js"), "utf8");
+const shortcuts = fs.readFileSync(path.join(ticketRoot, "shortcuts.js"), "utf8");
 
 test("uses Ticket Forge branding, its generated icon, and Mocha for first visits", () => {
   assert.match(html, /<title>Ticket Forge \/\/ Encrypted Desk<\/title>/);
@@ -21,7 +22,7 @@ test("uses Ticket Forge branding, its generated icon, and Mocha for first visits
 test("exposes timer reset and the requested deletion shortcut", () => {
   assert.match(app, /async function resetTimer/);
   assert.match(app, /data-item-action="reset-timer"/);
-  assert.match(app, /event\.ctrlKey && event\.altKey && key === "d"/);
+  assert.match(shortcuts, /"Ctrl\+Alt\+D": "delete"/);
   assert.match(html, /<kbd>Ctrl Alt D<\/kbd>/);
 });
 
@@ -36,4 +37,14 @@ test("supports arrow navigation, note checklists, and growing text areas", () =>
   assert.match(styles, /\.checklist-toggle:checked::after/);
   assert.match(styles, /content: "X"/);
   assert.match(styles, /resize: vertical/);
+});
+
+test("makes note creation explicit and provides editable exact-sequence key mode", () => {
+  assert.match(app, /NOTE TITLE \(NO ID NEEDED\)/);
+  assert.match(app, /Notes are local text records and do not use ticket IDs/);
+  assert.match(html, /<script src="shortcuts\.js"><\/script>\s*<script src="app\.js"><\/script>/);
+  assert.match(shortcuts, /"Ctrl\+Alt\+K": "key-mode"/);
+  assert.match(shortcuts, /fold: "ff"/);
+  assert.match(app, /function handleKeyboardModeKey/);
+  assert.match(app, /event\.key === "Escape"/);
 });

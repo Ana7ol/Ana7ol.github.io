@@ -128,6 +128,36 @@ Ticket browser --Entra user token--> integration gateway
 
 The gateway should validate the signed-in user, allow only required operations, map local ticket IDs to SAP objects, protect secrets in a managed store, rate-limit calls, and keep an audit trail. Before implementation, collect the SAP product and release, API documentation/base URL, authentication method, required actions (read/create/update/time booking), field mappings, network location, and owner/security approval.
 
+## Local solution assistant / RAG proposal
+
+A retrieval-augmented assistant is feasible and is safer than training a model directly on the tickets. The model would not memorize the vault. Instead, each question would retrieve a small number of relevant resolved tickets and provide those excerpts to a replaceable small language model for that one answer.
+
+Recommended flow:
+
+```text
+Unlocked vault
+    |
+    +-- index DONE tickets: ID, title, problem, notes, solution
+    |       |
+    |       v
+    |   local embeddings + encrypted vector index
+    |
+question --> retrieve top matching old tickets --> small model --> suggested answer
+                                                        |
+                                                        v
+                                             cited ticket IDs / excerpts
+```
+
+The first version should be read-only and explicitly invoked on a selected ticket. It should return possible solutions with the source ticket IDs, never write a solution or update SAP automatically. Index updates must add changed tickets and remove deleted tickets. Empty solutions, passwords, tokens, email signatures, and unnecessary personal data should be excluded before indexing.
+
+Three deployment choices are possible:
+
+1. **Local companion service — recommended for a personal vault.** A small embedding model, vector store, and 3–8B-class instruct model run on the workstation. Ticket text stays local, but the service must authenticate requests and allow only the Ticket Forge origin.
+2. **In-browser WebGPU.** Maximum local privacy and no service process, but model downloads, memory use, browser compatibility, encrypted index management, and CSP changes make it the most complex client implementation.
+3. **Organization-hosted RAG gateway.** Best for Entra access control, SAP/Outlook integration, shared knowledge, audit, backups, and managed models. It also means ticket content leaves the browser and therefore needs data-owner and security approval.
+
+Embeddings and retrieved excerpts are sensitive data, even when they are not readable ticket files. Encrypt the index at rest, bind it to the vault/user, delete vectors when tickets are deleted, log access without logging ticket bodies, defend retrieved text as untrusted input, and keep a human approval step. The existing `connect-src 'none'` CSP intentionally blocks any companion or hosted service until a specific design and allow-list are approved.
+
 ## Sources used for the assessment
 
 - [GitHub Pages is static hosting](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)
