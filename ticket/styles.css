@@ -429,7 +429,7 @@ select:focus {
 
 .toolbar {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(10, minmax(0, 1fr));
   gap: 1px;
   margin: 12px 0;
   background: var(--line);
@@ -639,6 +639,17 @@ details[open] > summary::before {
   font-size: 10px;
 }
 
+.time-chip {
+  grid-column: 2 / -1;
+  color: var(--green-dim);
+  font-size: 10px;
+}
+
+.time-chip.running {
+  color: var(--green);
+  font-weight: 700;
+}
+
 .item-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -674,6 +685,39 @@ details[open] > summary::before {
 
 .item-actions button:hover {
   color: var(--mauve);
+}
+
+.item-actions button[data-item-action="delete"] {
+  color: var(--red);
+}
+
+:root[data-theme="emacs"] .app {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+:root[data-theme="emacs"] .topbar,
+:root[data-theme="emacs"] .toolbar,
+:root[data-theme="emacs"] .help-panel,
+:root[data-theme="emacs"] .command-line,
+:root[data-theme="emacs"] .terminal-head {
+  display: none;
+}
+
+:root[data-theme="emacs"] main {
+  display: block;
+}
+
+:root[data-theme="emacs"] .terminal {
+  min-height: 100vh;
+  border: 0;
+  background: var(--bg);
+}
+
+:root[data-theme="emacs"] .ticket-tree {
+  padding: 14px;
 }
 
 .field {

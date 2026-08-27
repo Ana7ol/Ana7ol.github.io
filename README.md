@@ -1,12 +1,22 @@
-# React + Vite
+# TKFILE ticket desk
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The ticket desk at `https://ana7ol.github.io/ticket/` is a dependency-free, static web application. It stores an encrypted ticket vault in the current browser and can import or export the plain-text TKFILE format.
 
-Currently, two official plugins are available:
+The application source is in `ticket/`:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `index.html` contains the accessible page, command toolbar, dialogs, and Content Security Policy.
+- `theme-init.js` restores the selected theme before the page renders.
+- `core.js` contains pure ticket parsing, formatting, grouping, and time helpers.
+- `app.js` contains vault encryption, persistence, commands, reminders, timers, and UI behavior.
+- `styles.css` contains all four themes and the Emacs fullscreen layout.
+- `tests/core.test.js` verifies the portable core and TKFILE round trips.
 
-## Expanding the ESLint configuration
+Run the checks from this repository root:
 
-If you are developing a production application, we recommend using TypeScript and enable type-aware lint rules. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```powershell
+node --check ticket/app.js
+node --check ticket/core.js
+node --test ticket/tests/core.test.js
+```
+
+See [ticket/ARCHITECTURE_SECURITY.md](ticket/ARCHITECTURE_SECURITY.md) for the architecture, security assessment, and Outlook/SAP integration options.

@@ -8,7 +8,7 @@
     themeColors: { mocha: "#11111b", latte: "#eff1f5", emacs: "#f7f7f7", doom: "#282c34" }
   };
   const STORAGE_KEY = "tkfile.encrypted-vault.v1";
-  const PBKDF2_ITERATIONS = 310000;
+  const PBKDF2_ITERATIONS = 600000;
   const AUTO_LOCK_MS = 15 * 60 * 1000;
   const DEFAULT_CONTACTS = {
     CB1: "CB1",
@@ -62,6 +62,7 @@
   let toastTimer = null;
   let autoLockTimer = null;
   let reminderTimer = null;
+  let timeDisplayTimer = null;
   let reminderCheckRunning = false;
   const collapsed = new Set();
   const acknowledgedReminders = new Set();
@@ -135,7 +136,9 @@
       requester: value && typeof value.requester === "string" ? value.requester : "",
       hardware: value && typeof value.hardware === "string" ? value.hardware : "",
       asset: value && typeof value.asset === "string" ? value.asset : "",
-      reminder: null
+      reminder: null,
+      timeMs: value && Number.isFinite(value.timeMs) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(value.timeMs))) : 0,
+      timeStartedAt: null
     };
     if (value && typeof value.uid === "string" && value.uid) itemValues.uid = value.uid;
     const base = Core.blankItem(itemValues);
@@ -147,6 +150,9 @@
           ? new Date(value.reminder.snoozedUntil).toISOString()
           : null
       };
+    }
+    if (value && value.timeStartedAt && !Number.isNaN(new Date(value.timeStartedAt).getTime())) {
+      base.timeStartedAt = new Date(value.timeStartedAt).toISOString();
     }
     return base;
   }
@@ -187,6 +193,7 @@
     const stateSnapshot = JSON.stringify(ticketState);
     const keySnapshot = vaultKey;
     const saltSnapshot = new Uint8Array(vaultSalt);
+    const iterationsSnapshot = vaultIterations;
     setSaveStatus("ENCRYPTING…", "saving");
 
     saveChain = saveChain.then(async function () {
@@ -199,7 +206,7 @@
       const record = {
         version: 1,
         kdf: "PBKDF2-SHA256",
-        iterations: vaultIterations,
+        iterations: iterationsSnapshot,
         salt: bytesToBase64(saltSnapshot),
         cipher: "AES-256-GCM",
         iv: bytesToBase64(iv),
@@ -244,11 +251,17 @@
     elements.unlockForm.reset();
     elements.setupForm.reset();
     acknowledgedReminders.clear();
+    collapsed.clear();
+    ticketState.items.forEach((item) => collapsed.add(`i:${item.uid}`));
+    activeFoldKey = null;
     if (!selectedItemId && ticketState.items.length) selectedItemId = Core.sortItems(ticketState.items)[0].uid;
     renderTree();
     resetAutoLock();
     clearInterval(reminderTimer);
     reminderTimer = setInterval(checkReminders, 15000);
+    clearInterval(timeDisplayTimer);
+    timeDisplayTimer = setInterval(updateTimeDisplays, 1000);
+    updateTimeDisplays();
     checkReminders();
   }
 
@@ -257,6 +270,7 @@
     if (!skipSave) await persistNow();
     clearTimeout(autoLockTimer);
     clearInterval(reminderTimer);
+    clearInterval(timeDisplayTimer);
     clearTimeout(saveTimer);
     ticketState = null;
     vaultKey = null;
@@ -265,7 +279,15 @@
     selectedItemId = null;
     activeEditor = null;
     activeFoldKey = null;
+    collapsed.clear();
+    acknowledgedReminders.clear();
+    elements.ticketTree.replaceChildren();
+    elements.ticketCount.textContent = "0 ITEMS";
+    elements.emptyState.hidden = true;
+    elements.commandInput.value = "";
     if (elements.modal.open) elements.modal.close("cancel");
+    elements.modalFields.replaceChildren();
+    elements.modalActions.replaceChildren();
     showAuth(localStorage.getItem(STORAGE_KEY) ? "unlock" : "setup");
   }
 
@@ -315,15 +337,19 @@
     const reminder = item.reminder
       ? `<span class="reminder-chip">REMINDER ${escapeHtml(Core.formatReminderTime(item.reminder.snoozedUntil || item.reminder.due))} | ${escapeHtml(item.reminder.message)}</span>`
       : "";
+    const trackedTime = `<span class="time-chip${item.timeStartedAt ? " running" : ""}" data-time-display="${escapeHtml(item.uid)}">` +
+      `${item.timeStartedAt ? "RECORDING" : "TIME"} ${escapeHtml(Core.formatDuration(Core.totalTimeMs(item)))}</span>`;
     const actions = `<div class="item-actions">` +
+      `<button type="button" data-item-action="toggle-timer">${item.timeStartedAt ? "STOP TIMER" : "START TIMER"}</button>` +
       `<button type="button" data-item-action="copy-heading">COPY HEADING</button>` +
-      `<button type="button" data-item-action="edit-heading">EDIT HEADING</button></div>`;
+      `<button type="button" data-item-action="edit-heading">EDIT HEADING</button>` +
+      `<button type="button" data-item-action="delete">DELETE</button></div>`;
     let heading;
     let body;
 
     if (item.kind === "NOTE") {
       heading = `<span class="heading-copy"><span class="kind">NOTE</span><span class="pipe">|</span>` +
-        `<span class="item-title">${escapeHtml(item.title || "Untitled note")}</span></span>${reminder}`;
+        `<span class="item-title">${escapeHtml(item.title || "Untitled note")}</span></span>${reminder}${trackedTime}`;
       body = actions + fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
     } else {
       const kind = item.kind === "HARDWARE" ? `<span class="kind">HARDWARE</span>` : "";
@@ -332,7 +358,7 @@
         `<span class="pipe">|</span>` +
         `<a class="ticket-id" href="${escapeHtml(Core.makeTicketUrl(item.ticketId) || "#")}" target="_blank" rel="noopener">${escapeHtml(item.ticketId)}</a>` +
         `<span class="pipe">|</span>` +
-        `<span class="item-title">${escapeHtml(item.title || "Untitled ticket")}</span></span>${reminder}`;
+        `<span class="item-title">${escapeHtml(item.title || "Untitled ticket")}</span></span>${reminder}${trackedTime}`;
 
       body = actions;
       if (item.kind === "HARDWARE") {
@@ -544,12 +570,22 @@
         result = { action: event.submitter ? event.submitter.value : "ok", values };
         elements.modal.close("submit");
       }
+      function onKeyDown(event) {
+        if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
+        if (event.target.matches("textarea, button")) return;
+        const primaryAction = elements.modalActions.querySelector(".primary-action");
+        if (!primaryAction) return;
+        event.preventDefault();
+        elements.modalForm.requestSubmit(primaryAction);
+      }
       function onClose() {
         elements.modalForm.removeEventListener("submit", onSubmit);
+        elements.modalForm.removeEventListener("keydown", onKeyDown);
         elements.modal.removeEventListener("close", onClose);
         resolve(result);
       }
       elements.modalForm.addEventListener("submit", onSubmit);
+      elements.modalForm.addEventListener("keydown", onKeyDown);
       elements.modal.addEventListener("close", onClose);
       elements.modal.showModal();
       const first = elements.modalFields.querySelector("input, textarea, select");
@@ -652,6 +688,72 @@
       control.remove();
     }
     showToast("Full heading copied.");
+  }
+
+  function updateTimeDisplays() {
+    if (!ticketState) return;
+    elements.ticketTree.querySelectorAll("[data-time-display].running").forEach(function (node) {
+      const item = findItem(node.dataset.timeDisplay);
+      if (!item) return;
+      node.textContent = `${item.timeStartedAt ? "RECORDING" : "TIME"} ${Core.formatDuration(Core.totalTimeMs(item))}`;
+    });
+  }
+
+  function stopTimerAt(item, stoppedAt) {
+    if (!item || !item.timeStartedAt) return false;
+    item.timeMs = Core.totalTimeMs(item, stoppedAt);
+    item.timeStartedAt = null;
+    return true;
+  }
+
+  function toggleTimer(uid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item) return showToast("Select a ticket or note first.");
+    const now = new Date();
+    const wasRunning = Boolean(item.timeStartedAt);
+
+    ticketState.items.forEach(function (candidate) {
+      if (candidate.uid !== item.uid) stopTimerAt(candidate, now);
+    });
+
+    if (wasRunning) stopTimerAt(item, now);
+    else item.timeStartedAt = now.toISOString();
+
+    queueSave();
+    renderTree();
+    selectItem(item.uid, { open: true });
+    updateTimeDisplays();
+    showToast(wasRunning
+      ? `Timer stopped at ${Core.formatDuration(item.timeMs)}.`
+      : `Timer started for ${item.title || "selected item"}.`);
+  }
+
+  async function deleteItem(uid) {
+    const item = findItem(uid || selectedItemId);
+    if (!item) return showToast("Select a ticket or note first.");
+    const label = item.kind === "NOTE" ? "NOTE" : "TICKET";
+    const result = await openDialog({
+      kicker: "DELETE",
+      title: `DELETE ${label}?`,
+      copy: `${Core.formatItemHeading(item)}\n\nThis removes the item from this encrypted browser vault. Export a backup first if you may need it later.`,
+      actions: [
+        { value: "cancel", label: "CANCEL" },
+        { value: "delete", label: `DELETE ${label}`, danger: true }
+      ]
+    });
+    if (!result || result.action !== "delete") return;
+
+    const index = ticketState.items.findIndex((candidate) => candidate.uid === item.uid);
+    if (index < 0) return;
+    ticketState.items.splice(index, 1);
+    acknowledgedReminders.delete(item.uid);
+    collapsed.delete(`i:${item.uid}`);
+    const replacement = ticketState.items[index] || ticketState.items[index - 1] || null;
+    selectedItemId = replacement ? replacement.uid : null;
+    activeFoldKey = selectedItemId ? `i:${selectedItemId}` : null;
+    await persistNow();
+    renderTree();
+    showToast(`${label} deleted.`);
   }
 
   async function switchStatus() {
@@ -984,9 +1086,13 @@
       status: switchStatus,
       contact: pickContact,
       contacts: editContacts,
+      time: toggleTimer,
+      timer: toggleTimer,
       fold: toggleFold,
       copy: copyHeading,
       edit: editHeading,
+      delete: deleteItem,
+      remove: deleteItem,
       theme: chooseTheme,
       data: dataMenu,
       export: dataMenu,
@@ -1038,6 +1144,19 @@
         vaultSalt = unlocked.salt;
         vaultIterations = unlocked.iterations;
         ticketState = unlocked.state;
+        if (unlocked.iterations < PBKDF2_ITERATIONS) {
+          try {
+            vaultSalt = crypto.getRandomValues(new Uint8Array(16));
+            vaultIterations = PBKDF2_ITERATIONS;
+            vaultKey = await deriveVaultKey(password, vaultSalt, vaultIterations);
+            await persistNow();
+          } catch (migrationError) {
+            console.warn("Vault key settings could not be upgraded.", migrationError);
+            vaultKey = unlocked.key;
+            vaultSalt = unlocked.salt;
+            vaultIterations = unlocked.iterations;
+          }
+        }
         elements.authError.textContent = "";
         unlockApp();
       } catch (error) {
@@ -1055,8 +1174,10 @@
         const itemNode = itemAction.closest(".item[data-item-id]");
         if (!itemNode) return;
         selectItem(itemNode.dataset.itemId);
+        if (itemAction.dataset.itemAction === "toggle-timer") toggleTimer(itemNode.dataset.itemId);
         if (itemAction.dataset.itemAction === "copy-heading") copyHeading(itemNode.dataset.itemId);
         if (itemAction.dataset.itemAction === "edit-heading") editHeading(itemNode.dataset.itemId);
+        if (itemAction.dataset.itemAction === "delete") deleteItem(itemNode.dataset.itemId);
         return;
       }
       const commandButton = event.target.closest("[data-command]");
@@ -1109,11 +1230,15 @@
       let command = null;
       if (event.ctrlKey && event.altKey && key === "t") command = "new";
       else if (event.ctrlKey && event.altKey && key === "f") command = "fold";
+      else if (event.ctrlKey && event.altKey && key === "m") command = "theme";
+      else if (event.ctrlKey && event.altKey && key === "l") command = "lock";
       else if (event.altKey && !event.ctrlKey && key === "r") command = "remind";
       else if (event.altKey && !event.ctrlKey && key === "n") command = "next";
       else if (event.altKey && !event.ctrlKey && key === "o") command = "open";
       else if (event.altKey && !event.ctrlKey && key === "c") command = "status";
       else if (event.altKey && !event.ctrlKey && key === "p") command = "contact";
+      else if (event.altKey && !event.ctrlKey && key === "t") command = "time";
+      else if (event.key === "Delete" && !event.target.matches("input, textarea, select")) command = "delete";
       else if (event.key === ":" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.target.matches("input, textarea, select")) {
         event.preventDefault();
         return elements.commandInput.focus();

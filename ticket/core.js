@@ -123,6 +123,31 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
+  function formatDuration(milliseconds) {
+    const numeric = Number(milliseconds);
+    const totalSeconds = Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric / 1000)) : 0;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, "0")}:${pad(minutes)}:${pad(seconds)}`;
+  }
+
+  function parseDuration(value) {
+    const match = String(value || "").trim().match(/^(\d+):([0-5]\d):([0-5]\d)$/);
+    if (!match) return null;
+    const result = ((Number(match[1]) * 3600) + (Number(match[2]) * 60) + Number(match[3])) * 1000;
+    return Number.isSafeInteger(result) ? result : null;
+  }
+
+  function totalTimeMs(item, suppliedNow) {
+    const base = Number.isFinite(item && item.timeMs) ? Math.max(0, item.timeMs) : 0;
+    if (!item || !item.timeStartedAt) return base;
+    const started = new Date(item.timeStartedAt).getTime();
+    const now = suppliedNow == null ? Date.now() : new Date(suppliedNow).getTime();
+    if (Number.isNaN(started) || Number.isNaN(now)) return base;
+    return Math.min(Number.MAX_SAFE_INTEGER, base + Math.max(0, now - started));
+  }
+
   function randomId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
     return `item-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -142,7 +167,9 @@
       requester: "",
       hardware: "",
       asset: "",
-      reminder: null
+      reminder: null,
+      timeMs: 0,
+      timeStartedAt: null
     }, overrides || {});
   }
 
@@ -214,6 +241,14 @@
         continue;
       }
 
+      match = line.match(/^\s*TIME\s+SPENT\s+(\d+:[0-5]\d:[0-5]\d)\s*$/i);
+      if (match) {
+        flushField();
+        currentItem.timeMs = parseDuration(match[1]) || 0;
+        currentItem.timeStartedAt = null;
+        continue;
+      }
+
       match = line.match(/^\s*(PROBLEM|NOTES|SOLUTION|REQUESTER|HARDWARE|ASSET\s*\/\s*SERIAL)\s*$/i);
       if (match) {
         flushField();
@@ -259,6 +294,11 @@
 
     if (item.reminder) {
       lines.push(`${labelIndent}REMINDER ${formatReminderTime(item.reminder.due)} | ${item.reminder.message || item.title}`);
+    }
+
+    const trackedTime = totalTimeMs(item);
+    if (trackedTime > 0 || item.timeStartedAt) {
+      lines.push(`${labelIndent}TIME SPENT ${formatDuration(trackedTime)}`);
     }
 
     if (item.kind === "HARDWARE") {
@@ -322,6 +362,9 @@
     parseTicketInput,
     parseReminderTime,
     formatReminderTime,
+    formatDuration,
+    parseDuration,
+    totalTimeMs,
     localDateString,
     displayDate,
     blankItem,

@@ -22,6 +22,13 @@ test("parses relative, tomorrow, clock, ISO-like, and German reminder times", ()
   assert.equal(Core.parseReminderTime("tomorrow 99:00", now), null);
 });
 
+test("formats, parses, and totals tracked ticket time", () => {
+  assert.equal(Core.formatDuration(3723000), "01:02:03");
+  assert.equal(Core.parseDuration("101:02:03"), 363723000);
+  assert.equal(Core.parseDuration("1:99:00"), null);
+  assert.equal(Core.totalTimeMs({ timeMs: 60000, timeStartedAt: "2026-08-27T10:00:00.000Z" }, "2026-08-27T10:02:30.000Z"), 210000);
+});
+
 test("round-trips standard, hardware, and note items through .tk text", () => {
   const items = [
     Core.blankItem({
@@ -34,6 +41,7 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
       problem: "Printer is offline.",
       notes: "Restarted queue.\nCalled user.",
       solution: "",
+      timeMs: 3723000,
       reminder: { due: new Date(2026, 7, 27, 14, 30).toISOString(), message: "Call again", snoozedUntil: null }
     }),
     Core.blankItem({
@@ -63,6 +71,7 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
   assert.match(text, /^TKFILE 1/);
   assert.match(text, /HARDWARE ASSIGNED TO @CB1 \| https:\/\/link\.kdo\.de\/itsm\/4565 \| New laptop/);
   assert.match(text, /REMINDER 2026-08-27 14:30 \| Call again/);
+  assert.match(text, /TIME SPENT 01:02:03/);
 
   const parsed = Core.parseTk(text);
   assert.equal(parsed.length, 3);
@@ -75,6 +84,7 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
     ]
   );
   assert.equal(parsed[0].notes, "Restarted queue.\nCalled user.");
+  assert.equal(parsed[0].timeMs, 3723000);
   assert.equal(parsed[1].asset, "ABC-123");
   assert.equal(parsed[2].notes, "Review open tickets.");
 });
