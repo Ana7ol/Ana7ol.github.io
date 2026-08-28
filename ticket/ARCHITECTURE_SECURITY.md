@@ -46,7 +46,7 @@ Defines the classic keyboard defaults and the commands available in the shortcut
 
 ### `core.js`
 
-A dependency-free, environment-neutral module. It validates ticket identifiers, parses reminder and duration values, normalizes headings, groups dates, and imports/exports the TKFILE text format. Node tests load this file directly.
+A dependency-free, environment-neutral module. It validates ticket and Jira identifiers, parses reminder and duration values, normalizes headings, groups dates, and imports/exports the TKFILE text format. Node tests load this file directly.
 
 ### `app.js`
 
@@ -107,7 +107,7 @@ Security level: good encryption-at-rest for a personal local tool on a trusted e
 3. Export an encrypted backup regularly and perform a restore drill. Keep at least one copy outside the browser profile.
 4. If the data is organizational, add Entra ID authentication, server-side authorization, audit events, retention rules, and centrally managed recovery.
 5. Use a host or edge layer that can set response headers including `Content-Security-Policy: frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, and an appropriate `Permissions-Policy`.
-6. Add browser-level integration tests for setup, unlock, create-by-Enter, timer persistence, deletion, locking, import/export, and every theme.
+6. Add browser-level integration tests for setup, unlock, dialog confirmation, timer persistence, deletion, locking, import/export, and every theme.
 
 ## Outlook integration
 

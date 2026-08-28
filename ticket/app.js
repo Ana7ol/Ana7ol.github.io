@@ -20,6 +20,7 @@
   const STORAGE_KEY = "tkfile.encrypted-vault.v1";
   const PBKDF2_ITERATIONS = 600000;
   const AUTO_LOCK_MS = 15 * 60 * 1000;
+  const ALT_R_DOUBLE_TAP_MS = 700;
   const DEFAULT_CONTACTS = {
     CB1: "CB1",
     CID: "CID",
@@ -28,6 +29,14 @@
     EUF: "EUF",
     TID: "TID"
   };
+  const HARDWARE_NOTE_TEMPLATE = [
+    "Hardware workflow:",
+    "- Record requested hardware.",
+    "- Record old SN and new SN.",
+    "- Manage Matrix entry.",
+    "- Complete Jira steps.",
+    "- Confirm handover or return."
+  ].join("\n");
 
   const elements = {
     authScreen: document.getElementById("auth-screen"),
@@ -67,12 +76,14 @@
   let selectedItemId = null;
   let activeEditor = null;
   let activeFoldKey = null;
+  let searchQuery = "";
   let saveTimer = null;
   let saveChain = Promise.resolve();
   let toastTimer = null;
   let autoLockTimer = null;
   let reminderTimer = null;
   let timeDisplayTimer = null;
+  let lastAltRAt = 0;
   let reminderCheckRunning = false;
   let activeShortcuts = loadShortcutPreferences();
   const collapsed = new Set();
@@ -143,6 +154,21 @@
     return entry;
   }
 
+  function normalizedTimerSession(value) {
+    const start = value && value.start && !Number.isNaN(new Date(value.start).getTime())
+      ? new Date(value.start).toISOString()
+      : null;
+    const end = value && value.end && !Number.isNaN(new Date(value.end).getTime())
+      ? new Date(value.end).toISOString()
+      : null;
+    if (!start || !end) return null;
+    return {
+      start,
+      end,
+      ms: Core.timerSessionMs(value)
+    };
+  }
+
   function normalizedItem(value) {
     const kind = ["TICKET", "HARDWARE", "NOTE"].includes(value && value.kind) ? value.kind : "TICKET";
     const itemValues = {
@@ -157,6 +183,13 @@
       requester: value && typeof value.requester === "string" ? value.requester : "",
       hardware: value && typeof value.hardware === "string" ? value.hardware : "",
       asset: value && typeof value.asset === "string" ? value.asset : "",
+      newSerial: value && typeof value.newSerial === "string"
+        ? value.newSerial
+        : (value && typeof value.asset === "string" ? value.asset : ""),
+      oldSerial: value && typeof value.oldSerial === "string" ? value.oldSerial : "",
+      matrixManaged: Boolean(value && value.matrixManaged),
+      jiraId: value && typeof value.jiraId === "string" ? (Core.extractJiraId(value.jiraId) || value.jiraId.trim()) : "",
+      jiraDone: Boolean(value && value.jiraDone),
       checklist: Array.isArray(value && value.checklist) ? value.checklist.slice(0, 200).map(function (entry) {
         return newChecklistEntry({
           uid: entry && typeof entry.uid === "string" && entry.uid ? entry.uid : undefined,
@@ -166,7 +199,10 @@
       }) : [],
       reminder: null,
       timeMs: value && Number.isFinite(value.timeMs) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(value.timeMs))) : 0,
-      timeStartedAt: null
+      timeStartedAt: null,
+      timeSessions: Array.isArray(value && value.timeSessions)
+        ? value.timeSessions.slice(-500).map(normalizedTimerSession).filter(Boolean)
+        : []
     };
     if (value && typeof value.uid === "string" && value.uid) itemValues.uid = value.uid;
     const base = Core.blankItem(itemValues);
@@ -307,6 +343,7 @@
     selectedItemId = null;
     activeEditor = null;
     activeFoldKey = null;
+    searchQuery = "";
     collapsed.clear();
     acknowledgedReminders.clear();
     elements.ticketTree.replaceChildren();
@@ -358,6 +395,50 @@
     return `<div class="field${full}"><label>${escapeHtml(label)}</label>${control}</div>`;
   }
 
+  function booleanFieldMarkup(item, field, label) {
+    return `<label class="boolean-field">` +
+      `<input type="checkbox" data-boolean-field="${escapeHtml(field)}"${item[field] ? " checked" : ""}>` +
+      `<span>${escapeHtml(label)}</span></label>`;
+  }
+
+  function jiraFieldMarkup(item) {
+    const value = item.jiraId || "";
+    const jiraUrl = Core.makeJiraUrl(value);
+    const link = jiraUrl
+      ? `<a class="field-link" href="${escapeHtml(jiraUrl)}" target="_blank" rel="noopener">OPEN JIRA</a>`
+      : "";
+    return `<div class="field jira-field"><label>JIRA ID</label><div class="field-with-link">` +
+      `<input value="${escapeHtml(value)}" data-field="jiraId" aria-label="JIRA ID">` +
+      link +
+      `</div></div>`;
+  }
+
+  function hardwareProgressMarkup(item) {
+    const progress = Core.hardwareProgress(item);
+    const complete = progress.complete ? " complete" : "";
+    return `<span class="hardware-progress-chip${complete}">HW ${progress.done}/${progress.total} DONE</span>`;
+  }
+
+  function refreshHardwareProgress(item) {
+    if (!item || item.kind !== "HARDWARE") return;
+    const node = Array.from(elements.ticketTree.querySelectorAll(".item[data-item-id]"))
+      .find((entry) => entry.dataset.itemId === item.uid);
+    const chip = node && node.querySelector(".hardware-progress-chip");
+    if (!chip) return;
+    const progress = Core.hardwareProgress(item);
+    chip.textContent = `HW ${progress.done}/${progress.total} DONE`;
+    chip.classList.toggle("complete", progress.complete);
+  }
+
+  function timeHistoryMarkup(item) {
+    const sessions = Array.isArray(item.timeSessions) ? item.timeSessions.slice(-8).reverse() : [];
+    if (!sessions.length) return "";
+    const rows = sessions.map(function (session) {
+      return `<li>${escapeHtml(Core.formatTimerSession(session))}</li>`;
+    }).join("");
+    return `<div class="time-history field full"><label>TIME HISTORY</label><ol>${rows}</ol></div>`;
+  }
+
   function checklistMarkup(item) {
     const entries = Array.isArray(item.checklist) ? item.checklist : [];
     const rows = entries.map(function (entry) {
@@ -397,24 +478,30 @@
     if (item.kind === "NOTE") {
       heading = `<span class="heading-copy"><span class="kind">NOTE</span><span class="pipe">|</span>` +
         `<span class="item-title">${escapeHtml(item.title || "Untitled note")}</span></span>${reminder}${trackedTime}`;
-      body = actions + checklistMarkup(item) + fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
+      body = actions + timeHistoryMarkup(item) + checklistMarkup(item) + fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
     } else {
       const kind = item.kind === "HARDWARE" ? `<span class="kind">HARDWARE</span>` : "";
+      const hardwareProgress = item.kind === "HARDWARE" ? hardwareProgressMarkup(item) : "";
       heading = `<span class="heading-copy">${kind}` +
         `<span class="status ${statusClass(item.status)}">${escapeHtml(item.status || "WORKING")}</span>` +
         `<span class="pipe">|</span>` +
         `<a class="ticket-id" href="${escapeHtml(Core.makeTicketUrl(item.ticketId) || "#")}" target="_blank" rel="noopener">${escapeHtml(item.ticketId)}</a>` +
         `<span class="pipe">|</span>` +
-        `<span class="item-title">${escapeHtml(item.title || "Untitled ticket")}</span></span>${reminder}${trackedTime}`;
+        `<span class="item-title">${escapeHtml(item.title || "Untitled ticket")}</span>${hardwareProgress}</span>${reminder}${trackedTime}`;
 
       body = actions;
       if (item.kind === "HARDWARE") {
         body += fieldMarkup(item, "requester", "REQUESTER", { full: true });
-        body += fieldMarkup(item, "hardware", "HARDWARE", { full: true });
-        body += fieldMarkup(item, "asset", "ASSET / SERIAL", { full: true });
+        body += fieldMarkup(item, "hardware", "REQUESTED HARDWARE", { full: true, rows: 3 });
+        body += fieldMarkup(item, "oldSerial", "OLD SN", { input: true });
+        body += fieldMarkup(item, "newSerial", "NEW SN", { input: true });
+        body += jiraFieldMarkup(item);
+        body += booleanFieldMarkup(item, "matrixManaged", "MATRIX MANAGED");
+        body += booleanFieldMarkup(item, "jiraDone", "JIRA STEPS DONE");
       } else {
         body += fieldMarkup(item, "problem", "PROBLEM", { full: true, rows: 4 });
       }
+      body += timeHistoryMarkup(item);
       body += fieldMarkup(item, "notes", "NOTES", { full: true, rows: 5 });
       body += fieldMarkup(item, "solution", "SOLUTION", { full: true, rows: 4 });
     }
@@ -460,12 +547,18 @@
     (root || elements.ticketTree).querySelectorAll(".item[open] textarea").forEach(growTextarea);
   }
 
+  function visibleItems() {
+    const items = ticketState ? ticketState.items : [];
+    return searchQuery ? items.filter((item) => Core.itemMatchesSearch(item, searchQuery)) : items;
+  }
+
   function renderTree() {
     if (!ticketState) return;
-    const validSelection = ticketState.items.some((item) => item.uid === selectedItemId);
-    if (!validSelection) selectedItemId = ticketState.items.length ? Core.sortItems(ticketState.items)[0].uid : null;
+    const shownItems = visibleItems();
+    const validSelection = shownItems.some((item) => item.uid === selectedItemId);
+    if (!validSelection) selectedItemId = shownItems.length ? Core.sortItems(shownItems)[0].uid : null;
     let html = "";
-    const groups = makeGroups(ticketState.items);
+    const groups = makeGroups(shownItems);
     groups.forEach(function (months, year) {
       let monthHtml = "";
       months.forEach(function (days, month) {
@@ -478,9 +571,14 @@
       });
       html += groupDetails("year", `y:${year}`, `YEAR ${year}`, monthHtml);
     });
+    if (!html && searchQuery && ticketState.items.length) {
+      html = `<p class="search-empty">No matches for /${escapeHtml(searchQuery)}.</p>`;
+    }
     elements.ticketTree.innerHTML = html;
     elements.emptyState.hidden = ticketState.items.length !== 0;
-    elements.ticketCount.textContent = `${ticketState.items.length} ${ticketState.items.length === 1 ? "ITEM" : "ITEMS"}`;
+    elements.ticketCount.textContent = searchQuery
+      ? `${shownItems.length}/${ticketState.items.length} MATCHES`
+      : `${ticketState.items.length} ${ticketState.items.length === 1 ? "ITEM" : "ITEMS"}`;
     setTimeout(() => growOpenTextareas(elements.ticketTree), 0);
   }
 
@@ -535,6 +633,10 @@
     return values.map((shortcut) => String(shortcut || "").trim()).filter(Boolean);
   }
 
+  function isReservedShortcut(shortcut) {
+    return String(shortcut || "").trim().toLowerCase() === "alt+r";
+  }
+
   function defaultShortcutMap() {
     const defaults = ShortcutConfig.defaults || {};
     return Object.fromEntries(shortcutCatalog().map(function (entry) {
@@ -550,7 +652,12 @@
       if (overrides && typeof overrides === "object") {
         shortcutCatalog().forEach(function (entry) {
           if (Object.prototype.hasOwnProperty.call(overrides, entry.command)) {
-            bindings[entry.command] = parseShortcutValue(overrides[entry.command]);
+            const rawShortcuts = parseShortcutValue(overrides[entry.command]);
+            const usableShortcuts = rawShortcuts.filter((shortcut) => !isReservedShortcut(shortcut));
+            bindings[entry.command] = usableShortcuts;
+            if (entry.command === "remind" && rawShortcuts.length && !usableShortcuts.length) {
+              bindings[entry.command] = parseShortcutValue(ShortcutConfig.defaults && ShortcutConfig.defaults.remind);
+            }
           }
         });
       }
@@ -578,6 +685,12 @@
       return binding.command;
     }
     return null;
+  }
+
+  function dialogConfirmShortcutMatches(event) {
+    const hasConfirmCommand = shortcutCatalog().some((entry) => entry.command === "confirm");
+    const shortcuts = hasConfirmCommand ? parseShortcutValue(activeShortcuts.confirm) : ["Ctrl+Alt+Y"];
+    return shortcuts.some((shortcut) => Core.shortcutMatches(event, shortcut));
   }
 
   function displayShortcut(shortcut) {
@@ -630,6 +743,10 @@
             }
             const shortcut = Core.shortcutFromEvent(event);
             if (!shortcut) return;
+            if (isReservedShortcut(shortcut)) {
+              showToast("Alt+R is reserved for timer reset.");
+              return;
+            }
             controls.forEach(function (other) {
               if (other === control) return;
               const retained = parseShortcutValue(other.value).filter((value) => value.toLowerCase() !== shortcut.toLowerCase());
@@ -655,7 +772,7 @@
     }
     const bindings = {};
     shortcutCatalog().forEach(function (entry) {
-      bindings[entry.command] = parseShortcutValue(result.values[prefix + entry.command]);
+      bindings[entry.command] = parseShortcutValue(result.values[prefix + entry.command]).filter((shortcut) => !isReservedShortcut(shortcut));
     });
     activeShortcuts = bindings;
     try {
@@ -695,6 +812,7 @@
     const result = await openDialog({
       kicker: "THEME",
       title: "SELECT COLOR THEME",
+      openFirstSelect: true,
       fields: [{
         name: "theme",
         label: "PALETTE",
@@ -719,7 +837,13 @@
     label.textContent = field.label;
     label.htmlFor = `dialog-${field.name}`;
     let control;
-    if (field.type === "select") {
+    if (field.type === "checkbox") {
+      row.classList.add("checkbox-row");
+      control = document.createElement("input");
+      control.type = "checkbox";
+      control.checked = field.checked !== false;
+      control.value = field.value || "on";
+    } else if (field.type === "select") {
       control = document.createElement("select");
       (field.options || []).forEach(function (option) {
         const node = document.createElement("option");
@@ -748,8 +872,48 @@
     if (field.minlength) control.minLength = field.minlength;
     if (field.placeholder) control.placeholder = field.placeholder;
     if (field.autocomplete) control.autocomplete = field.autocomplete;
-    row.append(label, control);
+    if (field.type === "checkbox") row.append(control, label);
+    else row.append(label, control);
     elements.modalFields.appendChild(row);
+  }
+
+  function closeSelectFallback(select) {
+    if (!(select instanceof HTMLSelectElement) || select.dataset.pickerFallback !== "open") return;
+    const previousSize = select.dataset.previousSize;
+    if (previousSize) select.setAttribute("size", previousSize);
+    else select.removeAttribute("size");
+    delete select.dataset.previousSize;
+    delete select.dataset.pickerFallback;
+    select.classList.remove("select-picker-fallback");
+  }
+
+  function expandSelectFallback(select) {
+    if (!(select instanceof HTMLSelectElement) || select.dataset.pickerFallback === "open") return;
+    select.dataset.previousSize = select.getAttribute("size") || "";
+    select.dataset.pickerFallback = "open";
+    select.size = Math.min(Math.max(select.options.length, 2), 8);
+    select.classList.add("select-picker-fallback");
+    select.addEventListener("change", () => closeSelectFallback(select), { once: true });
+    select.addEventListener("blur", () => closeSelectFallback(select), { once: true });
+  }
+
+  function openSelectPicker(select) {
+    if (!(select instanceof HTMLSelectElement)) return false;
+    select.focus({ preventScroll: true });
+    if (typeof select.showPicker === "function") {
+      try {
+        select.showPicker();
+        return true;
+      } catch (error) {
+        // Some browsers require a direct user gesture; fall back to a visible listbox.
+      }
+    }
+    expandSelectFallback(select);
+    return true;
+  }
+
+  function dialogAffirmativeAction() {
+    return elements.modalActions.querySelector(".primary-action") || elements.modalActions.querySelector(".danger-action");
   }
 
   function openDialog(config) {
@@ -770,6 +934,10 @@
       button.textContent = action.label;
       if (action.primary) button.classList.add("primary-action");
       if (action.danger) button.classList.add("danger-action");
+      if (action.primary || action.danger) {
+        const confirmShortcuts = parseShortcutValue(activeShortcuts.confirm);
+        if (confirmShortcuts.length) button.title = `Shortcut: ${confirmShortcuts.join(" or ")}`;
+      }
       elements.modalActions.appendChild(button);
     });
 
@@ -786,12 +954,18 @@
         elements.modal.close("submit");
       }
       function onKeyDown(event) {
-        if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
-        if (event.target.matches("textarea")) return;
-        const affirmativeAction = elements.modalActions.querySelector(".primary-action") || elements.modalActions.querySelector(".danger-action");
-        if (!affirmativeAction) return;
+        if (event.defaultPrevented || event.isComposing) return;
+        if (dialogConfirmShortcutMatches(event)) {
+          const action = dialogAffirmativeAction();
+          if (!action) return;
+          event.preventDefault();
+          elements.modalForm.requestSubmit(action);
+          return;
+        }
+        if (event.key !== "Enter") return;
+        if (event.target.matches("textarea, button")) return;
         event.preventDefault();
-        elements.modalForm.requestSubmit(affirmativeAction);
+        if (event.target instanceof HTMLSelectElement) openSelectPicker(event.target);
       }
       function onClose() {
         elements.modalForm.removeEventListener("submit", onSubmit);
@@ -805,8 +979,10 @@
       elements.modal.showModal();
       if (typeof config.onReady === "function") config.onReady(elements.modalForm);
       const first = elements.modalFields.querySelector("input, textarea, select");
-      const affirmativeAction = elements.modalActions.querySelector(".primary-action") || elements.modalActions.querySelector(".danger-action");
-      if (first || affirmativeAction) setTimeout(() => (first || affirmativeAction).focus(), 0);
+      const firstSelect = config.openFirstSelect ? elements.modalFields.querySelector("select") : null;
+      const affirmativeAction = dialogAffirmativeAction();
+      if (firstSelect) openSelectPicker(firstSelect);
+      else if (first || affirmativeAction) setTimeout(() => (first || affirmativeAction).focus(), 0);
     });
   }
 
@@ -815,6 +991,7 @@
       kicker: "CTRL + ALT + T",
       title: "CREATE ITEM",
       copy: "For tickets, paste the ID and title together.\nExamples: 4564 Printer problem · 4564 | Printer problem · full ITSM URL + title",
+      openFirstSelect: true,
       fields: [
         { name: "kind", label: "TYPE", type: "select", value: "TICKET", options: [
           { value: "TICKET", label: "1 — STANDARD TICKET" },
@@ -822,6 +999,8 @@
           { value: "NOTE", label: "3 — NOTE" }
         ] },
         { name: "value", label: "TICKET ID + TITLE", required: true, placeholder: "4564 Printer problem" },
+        { name: "jiraId", label: "JIRA ID (OPTIONAL)", placeholder: "ABC-123 or link.kdo.de/jira/ABC-123" },
+        { name: "hardwareTemplate", label: "ADD HARDWARE NOTE TEMPLATE", type: "checkbox", checked: true },
         { name: "created", label: "DATE", type: "date", required: true, value: Core.localDateString(new Date()) }
       ],
       actions: [
@@ -831,14 +1010,25 @@
       onReady: function () {
         const kindControl = document.getElementById("dialog-kind");
         const valueControl = document.getElementById("dialog-value");
+        const jiraControl = document.getElementById("dialog-jiraId");
+        const jiraRow = jiraControl.closest(".field-row");
+        const templateControl = document.getElementById("dialog-hardwareTemplate");
+        const templateRow = templateControl.closest(".field-row");
         const valueLabel = elements.modalFields.querySelector('label[for="dialog-value"]');
         function updateCreatePrompt() {
           const isNote = kindControl.value === "NOTE";
+          const isHardware = kindControl.value === "HARDWARE";
           valueLabel.textContent = isNote ? "NOTE TITLE (NO ID NEEDED)" : "TICKET ID + TITLE";
           valueControl.placeholder = isNote ? "Morning handover" : "4564 Printer problem";
+          jiraRow.hidden = !isHardware;
+          jiraControl.disabled = !isHardware;
+          templateRow.hidden = !isHardware;
+          templateControl.disabled = !isHardware;
           elements.modalCopy.textContent = isNote
             ? "Notes are local text records and do not use ticket IDs. Enter only the note title."
-            : "Paste the ticket ID and title together.\nExamples: 4564 Printer problem · 4564 | Printer problem · full ITSM URL + title";
+            : (isHardware
+              ? "Paste the ticket ID and title together. Add a Jira ID or link if there is one; it stays editable afterward."
+              : "Paste the ticket ID and title together.\nExamples: 4564 Printer problem · 4564 | Printer problem · full ITSM URL + title");
         }
         kindControl.addEventListener("change", updateCreatePrompt);
         updateCreatePrompt();
@@ -854,7 +1044,9 @@
     } else {
       const parsed = Core.parseTicketInput(result.values.value);
       if (!parsed) return showToast("Put the ticket ID first, followed by the title.");
-      item = Core.blankItem({ kind, ticketId: parsed.ticketId, title: parsed.title, created: result.values.created });
+      const jiraId = kind === "HARDWARE" && result.values.jiraId ? (Core.extractJiraId(result.values.jiraId) || result.values.jiraId.trim()) : "";
+      const notes = kind === "HARDWARE" && result.values.hardwareTemplate ? HARDWARE_NOTE_TEMPLATE : "";
+      item = Core.blankItem({ kind, ticketId: parsed.ticketId, title: parsed.title, created: result.values.created, jiraId, notes });
     }
     ticketState.items.push(item);
     selectedItemId = item.uid;
@@ -933,8 +1125,19 @@
 
   function stopTimerAt(item, stoppedAt) {
     if (!item || !item.timeStartedAt) return false;
+    const startedAt = new Date(item.timeStartedAt);
+    const endedAt = new Date(stoppedAt);
     item.timeMs = Core.totalTimeMs(item, stoppedAt);
     item.timeStartedAt = null;
+    if (!Number.isNaN(startedAt.getTime()) && !Number.isNaN(endedAt.getTime())) {
+      if (!Array.isArray(item.timeSessions)) item.timeSessions = [];
+      item.timeSessions.push({
+        start: startedAt.toISOString(),
+        end: endedAt.toISOString(),
+        ms: Math.max(0, endedAt.getTime() - startedAt.getTime())
+      });
+      if (item.timeSessions.length > 500) item.timeSessions.splice(0, item.timeSessions.length - 500);
+    }
     return true;
   }
 
@@ -976,6 +1179,7 @@
     if (!result || result.action !== "reset") return;
     item.timeMs = 0;
     item.timeStartedAt = null;
+    item.timeSessions = [];
     await persistNow();
     renderTree();
     selectItem(item.uid, { open: true });
@@ -1052,6 +1256,7 @@
     const result = await openDialog({
       kicker: "ALT + C",
       title: "CHANGE STATUS",
+      openFirstSelect: true,
       fields: [
         { name: "status", label: "STATUS", type: "select", value: item.status.startsWith("ASSIGNED") ? "ASSIGNED" : item.status, options: [
           { value: "DONE", label: "1 — DONE" },
@@ -1080,7 +1285,7 @@
     const item = findItem(selectedItemId);
     if (!item) return showToast("Select a ticket or note first.");
     const result = await openDialog({
-      kicker: "ALT + R",
+      kicker: "CTRL + ALT + R",
       title: item.reminder ? "REPLACE / CLEAR REMINDER" : "SET REMINDER",
       copy: "Accepted: +30m · +2h · tomorrow 09:00 · 2026-08-27 14:30 · 27.08.2026 14:30\nEnter 0 to clear the current reminder.",
       fields: [
@@ -1116,6 +1321,18 @@
     const next = tickets[(currentIndex + 1 + tickets.length) % tickets.length];
     selectItem(next.uid, { open: true, scroll: true, flash: true });
     showToast(`Selected ticket ${next.ticketId}.`);
+  }
+
+  function setSearchQuery(value) {
+    searchQuery = String(value || "").replace(/^\//, "").trim();
+    renderTree();
+    if (searchQuery) showToast(`${visibleItems().length} matches for /${searchQuery}.`);
+    else showToast("Search cleared.");
+  }
+
+  function focusSearchInput() {
+    elements.commandInput.value = "/";
+    elements.commandInput.focus();
   }
 
   function navigateItems(direction) {
@@ -1163,6 +1380,7 @@
     const result = await openDialog({
       kicker: "ALT + P",
       title: "INSERT CONTACT",
+      openFirstSelect: true,
       fields: [{
         name: "contact",
         label: "CONTACT / NAME",
@@ -1211,6 +1429,18 @@
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function copyDailySummary() {
+    const date = Core.localDateString(new Date());
+    const summary = Core.renderDailySummary(ticketState.items, date);
+    try {
+      await navigator.clipboard.writeText(summary);
+      showToast("Daily summary copied.");
+    } catch (error) {
+      downloadFile(`ticket-summary-${date}.txt`, summary, "text/plain;charset=utf-8");
+      showToast("Daily summary downloaded.");
+    }
   }
 
   function chooseFile(input) {
@@ -1333,11 +1563,13 @@
     const result = await openDialog({
       kicker: "DATA",
       title: "VAULT & FILES",
+      openFirstSelect: true,
       fields: [{ name: "action", label: "ACTION", type: "select", options: [
         { value: "export-tk", label: "Export plain tickets.tk" },
         { value: "import-tk", label: "Import / merge .tk" },
         { value: "export-vault", label: "Export encrypted backup" },
         { value: "import-vault", label: "Restore encrypted backup" },
+        { value: "summary", label: "Copy daily summary" },
         { value: "contacts", label: "Edit contacts" },
         { value: "password", label: "Change password" }
       ] }],
@@ -1349,6 +1581,7 @@
       "import-tk": importTk,
       "export-vault": exportVault,
       "import-vault": () => importVault(elements.vaultImportInput),
+      summary: copyDailySummary,
       contacts: editContacts,
       password: changePassword
     };
@@ -1388,7 +1621,9 @@
   }
 
   async function runCommand(command) {
-    const name = String(command || "").trim().toLowerCase().split(/\s+/)[0];
+    const text = String(command || "").trim();
+    const name = text.toLowerCase().split(/\s+/)[0];
+    const args = text.slice(name.length).trim();
     const commands = {
       new: createItem,
       create: createItem,
@@ -1408,6 +1643,9 @@
       edit: editHeading,
       delete: deleteItem,
       remove: deleteItem,
+      confirm: function () {
+        showToast("Open a dialog before confirming.");
+      },
       checklist: () => addChecklistItem(),
       theme: chooseTheme,
       data: dataMenu,
@@ -1417,6 +1655,12 @@
       "import-tk": importTk,
       "export-vault": exportVault,
       "import-vault": () => importVault(elements.vaultImportInput),
+      summary: copyDailySummary,
+      daily: copyDailySummary,
+      today: copyDailySummary,
+      search: () => args ? setSearchQuery(args) : focusSearchInput(),
+      find: () => args ? setSearchQuery(args) : focusSearchInput(),
+      "clear-search": () => setSearchQuery(""),
       password: changePassword,
       "move-next": () => navigateItems(1),
       "move-previous": () => navigateItems(-1),
@@ -1561,11 +1805,38 @@
       const control = event.target.closest("[data-field]");
       if (!control) return;
       item[control.dataset.field] = control.value;
+      if (item.kind === "HARDWARE" && ["newSerial", "oldSerial", "jiraId", "asset"].includes(control.dataset.field)) {
+        refreshHardwareProgress(item);
+      }
       if (control instanceof HTMLTextAreaElement) growTextarea(control);
       queueSave();
     });
 
     elements.ticketTree.addEventListener("change", function (event) {
+      const booleanControl = event.target.closest("[data-boolean-field]");
+      const booleanItemNode = event.target.closest(".item[data-item-id]");
+      if (booleanControl && booleanItemNode) {
+        const item = findItem(booleanItemNode.dataset.itemId);
+        const field = booleanControl.dataset.booleanField;
+        if (item && ["matrixManaged", "jiraDone"].includes(field)) {
+          item[field] = booleanControl.checked;
+          refreshHardwareProgress(item);
+          queueSave();
+        }
+        return;
+      }
+      const fieldControl = event.target.closest("[data-field]");
+      const fieldItemNode = event.target.closest(".item[data-item-id]");
+      if (fieldControl && fieldControl.dataset.field === "jiraId" && fieldItemNode) {
+        const item = findItem(fieldItemNode.dataset.itemId);
+        if (item) {
+          item.jiraId = Core.extractJiraId(fieldControl.value) || fieldControl.value.trim();
+          queueSave();
+          renderTree();
+          selectItem(item.uid, { open: true });
+        }
+        return;
+      }
       const checkbox = event.target.closest("[data-checklist-done]");
       const itemNode = event.target.closest(".item[data-item-id]");
       if (!checkbox || !itemNode) return;
@@ -1582,17 +1853,34 @@
       event.preventDefault();
       const command = elements.commandInput.value;
       elements.commandInput.value = "";
+      if (command.trim().startsWith("/")) {
+        setSearchQuery(command);
+        return;
+      }
       runCommand(command);
     });
 
     document.addEventListener("keydown", function (event) {
-      if (elements.app.hidden || elements.modal.open) return;
+      if (elements.modal.open) return;
+      if (!elements.app.hidden && String(event.key || "").toLowerCase() === "r" && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        const now = Date.now();
+        event.preventDefault();
+        if (now - lastAltRAt <= ALT_R_DOUBLE_TAP_MS) {
+          lastAltRAt = 0;
+          resetTimer();
+          return;
+        }
+        lastAltRAt = now;
+        return;
+      }
       const globalCommand = configuredGlobalCommand(event);
       if (globalCommand) {
+        if (elements.app.hidden && globalCommand !== "theme") return;
         event.preventDefault();
         runCommand(globalCommand);
         return;
       }
+      if (elements.app.hidden) return;
       const checklistText = event.target.closest && event.target.closest("[data-checklist-text]");
       if (event.key === "Enter" && checklistText) {
         const itemNode = checklistText.closest(".item[data-item-id]");

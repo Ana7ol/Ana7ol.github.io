@@ -243,7 +243,7 @@ h1 {
   color: var(--mauve);
   font-size: clamp(24px, 4vw, 36px);
   font-weight: 500;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
 }
 
 .cursor {
@@ -330,6 +330,10 @@ input:focus,
 textarea:focus,
 select:focus {
   border-color: var(--green-dim);
+}
+
+select.select-picker-fallback {
+  height: auto;
 }
 
 .primary,
@@ -652,6 +656,19 @@ details[open] > summary::before {
   font-weight: 700;
 }
 
+.hardware-progress-chip {
+  padding: 1px 5px;
+  border: 1px solid var(--yellow);
+  color: var(--yellow);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.hardware-progress-chip.complete {
+  border-color: var(--green);
+  color: var(--green);
+}
+
 .item-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -696,6 +713,55 @@ details[open] > summary::before {
 
 .item-actions button[data-item-action="reset-timer"] {
   color: var(--yellow);
+}
+
+.field-with-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-link {
+  padding: 6px 0;
+  color: var(--cyan);
+  font-size: 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.field-link:hover {
+  color: var(--mauve);
+  text-decoration: underline;
+}
+
+.boolean-field {
+  display: inline-flex;
+  align-items: center;
+  align-self: end;
+  gap: 8px;
+  min-height: 40px;
+  color: var(--green-dim);
+  cursor: pointer;
+}
+
+.boolean-field input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.time-history ol {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.time-history li + li {
+  margin-top: 3px;
 }
 
 .note-checklist {
@@ -989,6 +1055,25 @@ dialog::backdrop {
 .dialog-fields .field-row {
   display: grid;
   gap: 5px;
+}
+
+.dialog-fields .checkbox-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-fields .checkbox-row input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.search-empty {
+  margin: 18px 0 0 35px;
+  color: var(--muted);
 }
 
 .dialog-actions {

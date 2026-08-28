@@ -27,6 +27,8 @@ test("formats, parses, and totals tracked ticket time", () => {
   assert.equal(Core.parseDuration("101:02:03"), 363723000);
   assert.equal(Core.parseDuration("1:99:00"), null);
   assert.equal(Core.totalTimeMs({ timeMs: 60000, timeStartedAt: "2026-08-27T10:00:00.000Z" }, "2026-08-27T10:02:30.000Z"), 210000);
+  assert.equal(Core.timerSessionMs({ start: "2026-08-27T10:00:00.000Z", end: "2026-08-27T10:02:30.000Z" }), 150000);
+  assert.match(Core.formatTimerSession({ start: "2026-08-27T10:00:00.000Z", end: "2026-08-27T10:02:30.000Z" }), /\| 00:02:30$/);
 });
 
 test("matches exact shortcuts and converts keyboard events for the editor", () => {
@@ -38,6 +40,39 @@ test("matches exact shortcuts and converts keyboard events for the editor", () =
   assert.equal(Core.shortcutFromEvent({ key: ":", shiftKey: true }), ":");
   assert.equal(Core.shortcutFromEvent({ key: "," }), "Comma");
   assert.equal(Core.shortcutFromEvent({ key: "Control", ctrlKey: true }), null);
+});
+
+test("keeps confirmation and reminder shortcuts distinct", () => {
+  assert.equal(Core.shortcutMatches({ key: "Y", ctrlKey: true, altKey: true, shiftKey: false, metaKey: false }, "Ctrl+Alt+Y"), true);
+  assert.equal(Core.shortcutMatches({ key: "Enter", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }, "Ctrl+Alt+Y"), false);
+  assert.equal(Core.shortcutMatches({ key: "R", ctrlKey: true, altKey: true, shiftKey: false, metaKey: false }, "Ctrl+Alt+R"), true);
+  assert.equal(Core.shortcutMatches({ key: "R", ctrlKey: false, altKey: true, shiftKey: false, metaKey: false }, "Ctrl+Alt+R"), false);
+  assert.equal(Core.shortcutFromEvent({ key: "r", ctrlKey: true, altKey: true, shiftKey: false, metaKey: false }), "Ctrl+Alt+R");
+});
+
+test("parses Jira IDs and links for hardware tickets", () => {
+  assert.equal(Core.extractJiraId("ABC-123"), "ABC-123");
+  assert.equal(Core.extractJiraId("https://link.kdo.de/jira/ABC-123"), "ABC-123");
+  assert.equal(Core.makeJiraUrl("ABC-123"), "https://link.kdo.de/jira/ABC-123");
+  assert.equal(Core.makeJiraUrl("not valid"), null);
+});
+
+test("calculates hardware progress and searches all important fields", () => {
+  const item = Core.blankItem({
+    kind: "HARDWARE",
+    ticketId: "4565",
+    title: "New laptop",
+    hardware: "ThinkPad T14",
+    oldSerial: "OLD-456",
+    newSerial: "NEW-123",
+    matrixManaged: true,
+    jiraId: "JRA-987",
+    jiraDone: false
+  });
+  assert.deepEqual(Core.hardwareProgress(item), { done: 4, total: 5, complete: false });
+  assert.equal(Core.itemMatchesSearch(item, "/thinkpad new-123"), true);
+  assert.equal(Core.itemMatchesSearch(item, "link.kdo.de/jira/JRA-987"), true);
+  assert.equal(Core.itemMatchesSearch(item, "printer"), false);
 });
 
 test("round-trips standard, hardware, and note items through .tk text", () => {
@@ -53,6 +88,9 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
       notes: "Restarted queue.\nCalled user.",
       solution: "",
       timeMs: 3723000,
+      timeSessions: [
+        { start: "2026-08-26T08:00:00.000Z", end: "2026-08-26T08:30:00.000Z", ms: 1800000 }
+      ],
       reminder: { due: new Date(2026, 7, 27, 14, 30).toISOString(), message: "Call again", snoozedUntil: null }
     }),
     Core.blankItem({
@@ -63,8 +101,12 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
       status: "ASSIGNED TO @CB1",
       created: "2026-08-26",
       requester: "Example User",
-      hardware: "Laptop",
-      asset: "ABC-123",
+      hardware: "ThinkPad T14",
+      newSerial: "NEW-123",
+      oldSerial: "OLD-456",
+      matrixManaged: true,
+      jiraId: "JRA-987",
+      jiraDone: false,
       notes: "Ordered.",
       solution: "Pending."
     }),
@@ -87,6 +129,12 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
   assert.match(text, /HARDWARE ASSIGNED TO @CB1 \| https:\/\/link\.kdo\.de\/itsm\/4565 \| New laptop/);
   assert.match(text, /REMINDER 2026-08-27 14:30 \| Call again/);
   assert.match(text, /TIME SPENT 01:02:03/);
+  assert.match(text, /TIME SESSION 2026-08-26T08:00:00\.000Z \| 2026-08-26T08:30:00\.000Z \| 00:30:00/);
+  assert.match(text, /REQUESTED HARDWARE\n\s+ThinkPad T14/);
+  assert.match(text, /NEW SN\n\s+NEW-123/);
+  assert.match(text, /OLD SN\n\s+OLD-456/);
+  assert.match(text, /MATRIX MANAGED \[x\]/);
+  assert.match(text, /JIRA https:\/\/link\.kdo\.de\/jira\/JRA-987 \[ \] STEPS DONE/);
   assert.match(text, /CHECKLIST\n\s+\[x\] Review open tickets\n\s+\[ \] Call requester/);
 
   const parsed = Core.parseTk(text);
@@ -101,12 +149,71 @@ test("round-trips standard, hardware, and note items through .tk text", () => {
   );
   assert.equal(parsed[0].notes, "Restarted queue.\nCalled user.");
   assert.equal(parsed[0].timeMs, 3723000);
-  assert.equal(parsed[1].asset, "ABC-123");
+  assert.equal(parsed[0].timeSessions.length, 1);
+  assert.equal(parsed[0].timeSessions[0].ms, 1800000);
+  assert.equal(parsed[1].hardware, "ThinkPad T14");
+  assert.equal(parsed[1].newSerial, "NEW-123");
+  assert.equal(parsed[1].oldSerial, "OLD-456");
+  assert.equal(parsed[1].matrixManaged, true);
+  assert.equal(parsed[1].jiraId, "JRA-987");
+  assert.equal(parsed[1].jiraDone, false);
   assert.equal(parsed[2].notes, "Review open tickets.");
   assert.deepEqual(parsed[2].checklist.map((entry) => ({ text: entry.text, done: entry.done })), [
     { text: "Review open tickets", done: true },
     { text: "Call requester", done: false }
   ]);
+});
+
+test("renders a daily summary from created items and timer sessions", () => {
+  const summary = Core.renderDailySummary([
+    Core.blankItem({
+      kind: "TICKET",
+      ticketId: "1111",
+      title: "Created today",
+      status: "DONE",
+      created: "2026-08-28",
+      timeMs: 60000
+    }),
+    Core.blankItem({
+      kind: "HARDWARE",
+      ticketId: "2222",
+      title: "Worked today",
+      created: "2026-08-20",
+      hardware: "Monitor",
+      newSerial: "NEW-1",
+      oldSerial: "OLD-1",
+      matrixManaged: true,
+      jiraId: "JRA-1",
+      jiraDone: true,
+      timeSessions: [
+        { start: "2026-08-28T07:00:00.000Z", end: "2026-08-28T07:15:00.000Z", ms: 900000 }
+      ]
+    })
+  ], "2026-08-28");
+  assert.match(summary, /Ticket Forge Daily Summary - 28\.08\.2026/);
+  assert.match(summary, /Items touched: 2/);
+  assert.match(summary, /Time spent: 00:16:00/);
+  assert.match(summary, /Done items: 1/);
+  assert.match(summary, /2222 \| HW 5\/5 DONE \| Monitor/);
+});
+
+test("imports legacy hardware serial labels into the new serial field", () => {
+  const text = [
+    "TKFILE 1",
+    "YEAR 2026",
+    "    MONTH 08",
+    "        DAY 26.08.2026",
+    "            HARDWARE WORKING | 4565 | New laptop",
+    "                HARDWARE",
+    "                    Laptop",
+    "",
+    "                ASSET / SERIAL",
+    "                    ABC-123"
+  ].join("\n");
+  const [item] = Core.parseTk(text);
+  assert.equal(item.kind, "HARDWARE");
+  assert.equal(item.hardware, "Laptop");
+  assert.equal(item.newSerial, "ABC-123");
 });
 
 test("imports dashed checklist syntax in notes", () => {
