@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Recover Ticket Vault</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7fb;
+      color: #18202f;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+
+    main {
+      width: min(720px, 100%);
+      background: #ffffff;
+      border: 1px solid #d6dde9;
+      border-radius: 8px;
+      box-shadow: 0 18px 45px rgba(35, 49, 76, 0.12);
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0 0 16px;
+      line-height: 1.55;
+    }
+
+    .status {
+      margin: 18px 0;
+      padding: 14px 16px;
+      border-radius: 6px;
+      background: #eef5ff;
+      border: 1px solid #bfd7ff;
+      font-weight: 650;
+    }
+
+    .status.error {
+      background: #fff0f0;
+      border-color: #ffc5c5;
+      color: #7f1d1d;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 20px 0 0;
+    }
+
+    button,
+    a.button {
+      appearance: none;
+      border: 1px solid #23314c;
+      border-radius: 6px;
+      background: #23314c;
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 16px;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    button.secondary,
+    a.button.secondary {
+      background: #ffffff;
+      color: #23314c;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      margin-top: 18px;
+      box-sizing: border-box;
+      border: 1px solid #c7d0df;
+      border-radius: 6px;
+      padding: 12px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      resize: vertical;
+    }
+
+    .small {
+      margin-top: 18px;
+      color: #5b6575;
+      font-size: 0.95rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        background: #111827;
+        color: #e5edf8;
+      }
+
+      main {
+        background: #182234;
+        border-color: #2b3950;
+        box-shadow: none;
+      }
+
+      .status {
+        background: #142642;
+        border-color: #2f5f9f;
+      }
+
+      .status.error {
+        background: #3b1515;
+        border-color: #7f1d1d;
+        color: #fecaca;
+      }
+
+      button.secondary,
+      a.button.secondary {
+        background: #182234;
+        color: #e5edf8;
+        border-color: #8da2c0;
+      }
+
+      textarea {
+        background: #0f172a;
+        color: #e5edf8;
+        border-color: #354761;
+      }
+
+      .small {
+        color: #aab6ca;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Recover Ticket Vault</h1>
+    <p>This page reads the old encrypted vault from this browser profile on <strong>ana7ol.github.io</strong> and downloads it as a backup file.</p>
+    <p>Deutsch: Diese Seite liest den alten verschluesselten Tresor aus diesem Browserprofil auf <strong>ana7ol.github.io</strong> und laedt ihn als Backup-Datei herunter.</p>
+    <div id="status" class="status">Checking browser storage...</div>
+    <div class="actions">
+      <button id="download" type="button" disabled>Download encrypted backup</button>
+      <button id="copy" class="secondary" type="button" disabled>Copy encrypted backup text</button>
+      <a class="button secondary" href="https://ticket.cloud-anatol.com/">Open new site</a>
+    </div>
+    <textarea id="raw" readonly hidden aria-label="Encrypted vault backup"></textarea>
+    <p class="small">The data remains encrypted. Import the downloaded file on the new site with the same password you used before.</p>
+  </main>
+  <script>
+    (function () {
+      "use strict";
+
+      var storageKey = "tkfile.encrypted-vault.v1";
+      var status = document.getElementById("status");
+      var download = document.getElementById("download");
+      var copy = document.getElementById("copy");
+      var raw = document.getElementById("raw");
+      var vault = "";
+
+      function setError(message) {
+        status.textContent = message;
+        status.classList.add("error");
+      }
+
+      function filename() {
+        return "ticket-vault-recovered-" + new Date().toISOString().slice(0, 10) + ".ticket-vault";
+      }
+
+      try {
+        vault = localStorage.getItem(storageKey) || "";
+      } catch (error) {
+        setError("Browser storage is blocked for this page. Open it in the same browser/profile you used yesterday.");
+        return;
+      }
+
+      if (!vault) {
+        setError("No old vault was found in this browser profile. Try the exact browser/profile/device you used yesterday.");
+        return;
+      }
+
+      try {
+        JSON.parse(vault);
+      } catch (error) {
+        setError("A stored value was found, but it is not valid JSON. Use Copy and keep the text before changing anything.");
+      }
+
+      raw.value = vault;
+      raw.hidden = false;
+      download.disabled = false;
+      copy.disabled = false;
+      status.textContent = "Encrypted vault found. Download it, then import it on the new site.";
+
+      download.addEventListener("click", function () {
+        var blob = new Blob([vault], { type: "application/json" });
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement("a");
+        link.href = url;
+        link.download = filename();
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      });
+
+      copy.addEventListener("click", function () {
+        raw.hidden = false;
+        raw.select();
+        try {
+          navigator.clipboard.writeText(vault).then(function () {
+            status.textContent = "Encrypted vault text copied.";
+          }, function () {
+            document.execCommand("copy");
+            status.textContent = "Encrypted vault text selected. Copy it manually if needed.";
+          });
+        } catch (error) {
+          document.execCommand("copy");
+          status.textContent = "Encrypted vault text selected. Copy it manually if needed.";
+        }
+      });
+    }());
+  </script>
+</body>
+</html>
