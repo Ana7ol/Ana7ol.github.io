@@ -65,6 +65,28 @@
       margin: 20px 0 0;
     }
 
+    form {
+      margin-top: 22px;
+      padding-top: 20px;
+      border-top: 1px solid #d6dde9;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-weight: 750;
+    }
+
+    input {
+      width: 100%;
+      min-height: 42px;
+      box-sizing: border-box;
+      border: 1px solid #c7d0df;
+      border-radius: 6px;
+      padding: 0 12px;
+      font: inherit;
+    }
+
     button,
     a.button {
       appearance: none;
@@ -148,6 +170,16 @@
         border-color: #354761;
       }
 
+      form {
+        border-color: #2b3950;
+      }
+
+      input {
+        background: #0f172a;
+        color: #e5edf8;
+        border-color: #354761;
+      }
+
       .small {
         color: #aab6ca;
       }
@@ -165,8 +197,21 @@
       <button id="copy" class="secondary" type="button" disabled>Copy encrypted backup text</button>
       <a class="button secondary" href="https://ticket.cloud-anatol.com/">Open new site</a>
     </div>
+    <form id="migrate-form" hidden>
+      <p>If your browser saved the old password, it may autofill here because this page is still on the old domain.</p>
+      <p>Deutsch: Wenn dein Browser das alte Passwort gespeichert hat, kann es hier automatisch ausgefuellt werden, weil diese Seite noch auf der alten Domain liegt.</p>
+      <label for="old-password">Old password</label>
+      <input id="old-password" name="password" type="password" autocomplete="current-password" required>
+      <label for="new-password">New password for the new site</label>
+      <input id="new-password" name="new-password" type="password" autocomplete="new-password" minlength="10" required>
+      <label for="confirm-password">Confirm new password</label>
+      <input id="confirm-password" name="confirm-password" type="password" autocomplete="new-password" minlength="10" required>
+      <div class="actions">
+        <button id="migrate" type="submit">Download backup with new password</button>
+      </div>
+    </form>
     <textarea id="raw" readonly hidden aria-label="Encrypted vault backup"></textarea>
-    <p class="small">The data remains encrypted. Import the downloaded file on the new site with the same password you used before.</p>
+    <p class="small">The data remains encrypted. Import a recovered backup with the old password, or create a new-password backup below and use that new password on the new site.</p>
   </main>
   <script>
     (function () {
@@ -177,15 +222,112 @@
       var download = document.getElementById("download");
       var copy = document.getElementById("copy");
       var raw = document.getElementById("raw");
+      var migrateForm = document.getElementById("migrate-form");
+      var oldPassword = document.getElementById("old-password");
+      var newPassword = document.getElementById("new-password");
+      var confirmPassword = document.getElementById("confirm-password");
       var vault = "";
+      var validVault = true;
+      var PBKDF2_ITERATIONS = 600000;
 
       function setError(message) {
         status.textContent = message;
         status.classList.add("error");
       }
 
-      function filename() {
-        return "ticket-vault-recovered-" + new Date().toISOString().slice(0, 10) + ".ticket-vault";
+      function setStatus(message) {
+        status.textContent = message;
+        status.classList.remove("error");
+      }
+
+      function backupFilename(label) {
+        return "ticket-vault-" + label + "-" + new Date().toISOString().slice(0, 10) + ".ticket-vault";
+      }
+
+      function bytesToBase64(bytes) {
+        var binary = "";
+        var view = new Uint8Array(bytes);
+        for (var index = 0; index < view.length; index += 1) binary += String.fromCharCode(view[index]);
+        return btoa(binary);
+      }
+
+      function base64ToBytes(value) {
+        var binary = atob(value);
+        var bytes = new Uint8Array(binary.length);
+        for (var index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+      }
+
+      function downloadText(name, text, type) {
+        var blob = new Blob([text], { type: type });
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement("a");
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      async function deriveVaultKey(password, salt, iterations) {
+        var source = await crypto.subtle.importKey(
+          "raw",
+          new TextEncoder().encode(password),
+          "PBKDF2",
+          false,
+          ["deriveKey"]
+        );
+        return crypto.subtle.deriveKey(
+          { name: "PBKDF2", salt: salt, iterations: iterations, hash: "SHA-256" },
+          source,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["encrypt", "decrypt"]
+        );
+      }
+
+      function parseVaultRecord(rawValue) {
+        var record = JSON.parse(rawValue);
+        if (!record || record.version !== 1 || record.kdf !== "PBKDF2-SHA256" || record.cipher !== "AES-256-GCM") {
+          throw new Error("Unsupported vault file.");
+        }
+        if (!Number.isInteger(record.iterations) || record.iterations < 100000 || record.iterations > 1000000) {
+          throw new Error("Invalid vault key settings.");
+        }
+        var salt = base64ToBytes(record.salt);
+        var iv = base64ToBytes(record.iv);
+        var ciphertext = base64ToBytes(record.ciphertext);
+        if (salt.length !== 16 || iv.length !== 12 || ciphertext.length < 16) throw new Error("Invalid vault data.");
+        return { record: record, salt: salt, iv: iv, ciphertext: ciphertext };
+      }
+
+      async function decryptVault(rawValue, password) {
+        var parsed = parseVaultRecord(rawValue);
+        var key = await deriveVaultKey(password, parsed.salt, parsed.record.iterations);
+        var plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: parsed.iv }, key, parsed.ciphertext);
+        return JSON.parse(new TextDecoder().decode(plaintext));
+      }
+
+      async function encryptVault(state, password) {
+        var salt = crypto.getRandomValues(new Uint8Array(16));
+        var iv = crypto.getRandomValues(new Uint8Array(12));
+        var key = await deriveVaultKey(password, salt, PBKDF2_ITERATIONS);
+        var ciphertext = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: iv },
+          key,
+          new TextEncoder().encode(JSON.stringify(state))
+        );
+        return JSON.stringify({
+          version: 1,
+          kdf: "PBKDF2-SHA256",
+          iterations: PBKDF2_ITERATIONS,
+          salt: bytesToBase64(salt),
+          cipher: "AES-256-GCM",
+          iv: bytesToBase64(iv),
+          ciphertext: bytesToBase64(ciphertext),
+          updatedAt: new Date().toISOString()
+        });
       }
 
       try {
@@ -201,27 +343,21 @@
       }
 
       try {
-        JSON.parse(vault);
+        parseVaultRecord(vault);
       } catch (error) {
-        setError("A stored value was found, but it is not valid JSON. Use Copy and keep the text before changing anything.");
+        validVault = false;
+        setError("A stored value was found, but it is not a valid encrypted vault. Use Copy and keep the text before changing anything.");
       }
 
       raw.value = vault;
       raw.hidden = false;
       download.disabled = false;
       copy.disabled = false;
-      status.textContent = "Encrypted vault found. Download it, then import it on the new site.";
+      if (validVault && window.crypto && window.crypto.subtle && window.isSecureContext) migrateForm.hidden = false;
+      if (validVault) setStatus("Encrypted vault found. Download it, then import it on the new site.");
 
       download.addEventListener("click", function () {
-        var blob = new Blob([vault], { type: "application/json" });
-        var url = URL.createObjectURL(blob);
-        var link = document.createElement("a");
-        link.href = url;
-        link.download = filename();
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
+        downloadText(backupFilename("recovered"), vault, "application/json");
       });
 
       copy.addEventListener("click", function () {
@@ -237,6 +373,33 @@
         } catch (error) {
           document.execCommand("copy");
           status.textContent = "Encrypted vault text selected. Copy it manually if needed.";
+        }
+      });
+
+      migrateForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        var oldValue = oldPassword.value;
+        var newValue = newPassword.value;
+        if (newValue.length < 10) {
+          setError("The new password must be at least 10 characters.");
+          return;
+        }
+        if (newValue !== confirmPassword.value) {
+          setError("The new passwords do not match.");
+          return;
+        }
+
+        try {
+          setStatus("Decrypting old vault and creating a new encrypted backup...");
+          var state = await decryptVault(vault, oldValue);
+          var migrated = await encryptVault(state, newValue);
+          downloadText(backupFilename("new-password"), migrated, "application/json");
+          setStatus("New encrypted backup downloaded. Import it on ticket.cloud-anatol.com and unlock it with your new password.");
+          oldPassword.value = "";
+          newPassword.value = "";
+          confirmPassword.value = "";
+        } catch (error) {
+          setError("The old password did not unlock this vault. Check your browser password manager for ana7ol.github.io.");
         }
       });
     }());
